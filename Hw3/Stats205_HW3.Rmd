@@ -1,0 +1,300 @@
+---
+title: "Stats205_HW3"
+author: "Yushang Lai"
+date: "2/6/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(epiR)
+library(tidyverse)
+library(knitr)
+library(pander)
+library(R2jags)
+library(bayesplot )
+library(coda)
+```
+
+# Problem 1
+
+```{r}
+options(digits=5)
+Prior.1 <- epi.betabuster(mode = 0.75, conf = 0.05, greaterthan = F, x = 0.6)
+Prior.2 <- epi.betabuster(mode = 0.01, conf = 0.99, greaterthan = F, x = 0.02)
+Prior.3 <- epi.betabuster(mode = 1, conf = 0.01, greaterthan = F, x = 0.8)
+
+
+capture.output(as.data.frame(Prior.1, row.names = 'Prior One'))
+capture.output(as.data.frame(Prior.2, row.names = 'Prior Two'))
+capture.output(as.data.frame(Prior.3, row.names = 'Prior Three'))
+
+# knitr::kable(rbind(Prior.1, Prior.2, Prior.3) , digits = rep.int(4, 8))
+df <- rbind(Prior.1, Prior.2, Prior.3)
+pander(df)
+panderOptions('digits', 4)
+```
+
+
+Piror One is $$Beta(23.567,8.5223) $$
+Piror two is $$Beta(11.035,994.47)  $$
+Piror three is $$Beta(20.638,1) $$
+
+# Problem 2
+
+##(1)
+$$ y_{i} \sim Bin(n_{i},\theta_{i}) \hspace{1cm}  ind$$
+$$\theta_{i} \sim Beta(\alpha,\beta) \hspace{1cm} i.i.d$$
+$$\alpha,\beta \sim \mu,\eta$$
+$$\mu,\eta \sim LN(m,\frac{1}{c}),Beta(a,b)$$
+##(2)
+```{r}
+ESP.data=read.csv("./GanzStudiesUsed-56.csv", header=T)
+head(ESP.data)
+jags_model ="model{
+for( i in 1 : N ) {
+Y[i] ~ dbin(theta[i], n[i])
+theta[i] ~ dbeta(alpha, beta)
+}
+alpha = eta * mu
+beta = eta * (1-mu)
+eta ~ dlnorm(m, 1/C)
+mu ~ dbeta(a, b)
+}"
+jags.data = list(Y = ESP.data$hits, n = ESP.data$ï..n, N = dim(ESP.data)[1], a=20,b=40,m=0,C=3)
+jags.param <- c("theta", "alpha", "beta","eta","mu")
+
+jagsfit <- jags(data=jags.data, n.chains=5, inits=NULL,parameters.to.save =jags.param, n.iter=2000, n.burnin=1000,DIC=TRUE, model.file=textConnection(jags_model))
+
+```
+##(3)
+
+
+```{r}
+op.prior <- epi.betabuster(mode = 0.25, conf = 0.95, greaterthan = F, x = 0.3)
+pb.prior <- epi.betabuster(mode = 0.33, conf = 0.95, greaterthan = F, x = 0.36)
+ps.prior <- epi.betabuster(mode = 0.25, conf = 0.95, greaterthan = F, x = 0.255)
+
+
+capture.output(as.data.frame(op.prior, row.names = 'pior Open minded', optional = TRUE))
+capture.output(as.data.frame(pb.prior, row.names = 'Prior Psi Beliver', optional =T))
+capture.output(as.data.frame(ps.prior, row.names = 'Prior Psi skeptics', optional = T))
+
+df <- rbind(op.prior, pb.prior, ps.prior)
+panderOptions('digits', 4)
+pander(df)
+
+```
+Priors are the Beta distributions with above parameters.
+
+
+##(4)
+
+```{r}
+jags.param <- c("alpha", "beta","mu")
+jags.data = list(Y = ESP.data$hits, n = ESP.data$ï..n, N = dim(ESP.data)[1], a = op.prior$shape1,b=op.prior$shape2,m=0,C=3)
+
+jagsfit.op <- jags(data=jags.data, n.chains=5, inits=NULL,parameters.to.save =jags.param, n.iter=3000, n.burnin=1000,DIC=TRUE, model.file=textConnection(jags_model))
+jagsfit.op$BUGSoutput$summary
+```
+```{r}
+
+```
+
+
+
+
+
+```{r}
+jags.param <- c("alpha", "beta","mu")
+jags.data = list(Y = ESP.data$hits, n = ESP.data$ï..n, N = dim(ESP.data)[1], a = pb.prior$shape1,b=pb.prior$shape2,m=0,C=3)
+
+jagsfit.pb <- jags(data=jags.data, n.chains=5, inits=NULL,parameters.to.save =jags.param, n.iter=3000, n.burnin=1000,DIC=TRUE, model.file=textConnection(jags_model))
+jagsfit.pb$BUGSoutput$summary
+```
+```{r}
+jags.param <- c("alpha", "beta","mu")
+jags.data = list(Y = ESP.data$hits, n = ESP.data$ï..n, N = dim(ESP.data)[1], a = ps.prior$shape1,b=ps.prior$shape2,m=0,C=3)
+
+jagsfit.ps <- jags(data=jags.data, n.chains=5, inits=NULL,parameters.to.save =jags.param, n.iter=3000, n.burnin=1000,DIC=TRUE, model.file=textConnection(jags_model))
+jagsfit.ps$BUGSoutput$summary
+```
+Posterior of Open-mdinded: mean is 0.3189 0.2899 0.34821
+0.33566 0.30754 0.36332
+0.30943 0.28373 0.33596
+
+
+```{r}
+qtls = matrix(NA,3,3)
+qtls[1,] = c(0.3189,0.2899,0.34821)
+qtls[2,] = c(0.33566,0.30754,0.36332)
+qtls[3,] = c(0.30943,0.28373,0.33596)
+df = data.frame(qtls)
+row.names(df) = c('Open-minded posterior','Psi beliver posterior','Psi skeptics posterior')
+colnames(df)= c('mean','2.5%','97.5%')
+knitr::kable(df, format = "markdown")
+```
+
+
+##(5)
+
+Note that for the Posterior Distribution. The left and right curve should be converges to 0. Since we use MCMC, they don't show in those figures but does not affect the analysis much.
+```{r}
+x_lst = seq(0,1,by=0.001)
+plot(x_lst,dbeta(x_lst,op.prior$shape1,op.prior$shape2),col="red", type="l", xlab = 'mu',lwd=3,ylim = c(0,30))
+lines(density(jagsfit.op$BUGSoutput$sims.matrix[,4]),col="green", type="l",ylab = 'pdf',lwd=3)
+legend('topright',col=c('red','green'),legend=c('Piror',"Posterior"),lwd=c(2,2))
+```
+
+```{r}
+x_lst = seq(0,1,by=0.001)
+plot(x_lst,dbeta(x_lst,pb.prior$shape1,pb.prior$shape2),col="red", type="l", xlab = 'mu',lwd=3,ylim = c(0,30))
+lines(density(jagsfit.ps$BUGSoutput$sims.matrix[,4]),col="green", type="l",ylab = 'pdf',lwd=3)
+legend('topright',col=c('red','green'),legend=c('Piror',"Posterior"),lwd=c(2,2))
+```
+```{r}
+x_lst = seq(0,1,by=0.001)
+plot(x_lst,dbeta(x_lst,ps.prior$shape1,ps.prior$shape2),col="red", type="l", xlab = 'mu',lwd=3,ylim = c(0,30))
+lines(density(jagsfit.ps$BUGSoutput$sims.matrix[,4]),col="green", type="l",ylab = 'pdf',lwd=3,ylim = c(0,30))
+legend('topright',col=c('red','green'),legend=c('Piror',"Posterior"),lwd=c(2,2))
+```
+
+
+For open-minded it's posterior mode and mean get larger with less std. THis infer that they under estimated the power of Psi.
+
+For those Psi beliver, it's posterior mode and mean get smaller with less std. THis infer that they over estimated the power of Psi.
+
+For those Psi Skeptic, it's posterior mode and mean get larger with less std. THis infer that they under estimated the power of Psi.
+
+
+# Problem 4
+
+##(1)
+
+
+$$z_{s|c} \sim Bin(N_{s|c},\theta_{s|c}) \hspace{1 cm} ind$$  
+$$\theta_{s|c} \sim Beta(\alpha_{c},\beta_{c})\hspace{1 cm} i.i.d$$
+$$\alpha_{c},\beta_{c} \sim \mu,\eta$$
+$$\mu \sim Beta(a,b)$$
+$$\eta \sim LN(m,C)$$
+
+##(2)
+
+```{r}
+data=read.csv("./BattingAverage.csv", header=T)
+head(data)
+```
+
+
+
+```{r}
+jags.data=list(Z = data$Hits, n = data$AtBats, Pos=data$PriPosNumber,N =nrow(data),m=0, C=3,a =23,b=77)
+
+jags_model = "model{
+  for (i in 1 : N)
+    {
+    Z[i] ~ dbin(theta[i], n[i])
+    theta[i] ~ dbeta(alpha[Pos[i]], beta[Pos[i]])
+    }
+  for(j in 1:9)
+    {
+    alpha[j] =eta[j]*mu[j]
+    beta[j] = eta[j]*(1-mu[j])
+    eta[j] ~ dlnorm(m, 1/C)
+    mu[j] ~ dbeta(a, b)
+    }
+    compare1 = theta[573]-theta[143]
+    compare2 = theta[142]-theta[921]
+    compare = mu[8]-mu[2]
+  }"
+
+jags.param <- c("theta", "mu","compare1","compare2","compare")
+jags_fit <- jags(data = jags.data, n.chains = 5, inits = NULL, parameters.to.save = jags.param,n.iter=3000, n.burnin=1000,DIC=TRUE, model.file=textConnection(jags_model))
+             
+```
+
+```{r}
+# jags_fit$BUGSoutput$summary
+jags.mcmc = as.mcmc(jags_fit)
+# mcmc_trace(jags.mcmc, pars = c("mu[2]"))
+```
+##(3)
+
+```{r}
+Number_lst = unique(data$PriPosNumber)
+Name_lst = unique(data$PriPos)
+capture.output(as.data.frame(Number_lst))
+capture.output(as.data.frame(Name_lst))
+# df <- rbind(Number_lst,Name_lst)
+# pander(df)
+```
+
+
+
+
+```{r}
+mcmc_intervals(jags.mcmc, pars=c("mu[1]", "mu[2]"), prob = 0.5, # 80% intervals - inner
+prob_outer = 0.95, # 95% - outer
+point_est = "mean")
+```
+By the table, mu[1] is pitcher and mu[2] is catcher.From above, we can infer that catcher (mean of at around 0.24) is better than pitcher (mean at bat around 0.13) at bat with credible interval 95%.
+
+##(4)
+
+```{r}
+mcmc_intervals(jags.mcmc, pars=c("mu[1]", "mu[3]"), prob = 0.5, # 80% intervals - inner
+prob_outer = 0.95, # 95% - outer
+point_est = "mean")
+```
+By the table, mu[1] is pitcher and mu[3] is First Base.From above, we can infer that First base(mean of at around 0.26) is better than pitcher (mean at bat around 0.13) at bat with credible interval 95%.
+
+
+
+##(5)
+
+
+```{r}
+which("Welington Castillo" == data$Player)
+which("Matt Wieters" == data$Player)
+```
+142 catcher mu2
+921 catcher mu2
+573 central mu8
+143 catcher mu2
+```{r}
+
+mcmc_intervals(jags.mcmc, pars=c("theta[142]", "compare2","mu[2]","theta[921]"), prob = 0.5, # 80% intervals - inner
+prob_outer = 0.95, # 95% - outer
+point_est = "mean")
+```
+```{r}
+p921 = 2/8
+p142 = 45/170
+print(p921)
+print(p142)
+```
+
+By the table, theta[142] is W.C. and M.W. From individuals above, we can infer that W.C. is slightly better than M.W. for at bat by comparing mean. however, M.W. preformance is more stable than W.C. since M.W. has smaller credible interval than W.C. By individual shrikage, we see that compare between two players has mean  5.4755e-03   with 95 credible interval (-5.0248e-02 6.1392e-02) which means that two players differs only 5 at bats for 100 games. Thus, we can conclude that two players has similar abilitilies at bat.there is an evidence of shrinakge in the estimates. Since both of the mean of the at bat for players comes close to mean from their all probability of at bat.
+
+##(6)
+```{r}
+which("Andrew McCutchen" == data$Player)
+which("Jason Castro" == data$Player)
+```
+```{r}
+mcmc_intervals(jags.mcmc, pars=c("theta[573]", "mu[8]","compare1","compare","mu[2]","theta[143]"), prob = 0.5, # 80% intervals - inner
+prob_outer = 0.95, # 95% - outer
+point_est = "mean")
+```
+```{r}
+print(66/257)
+print(194/593)
+```
+
+
+
+
+By the table, theta[573] is J.C. and A.M. From above, we can infer that J.C. is  better than A.M. for at bat by comparing mean around 0.31 to 0.25.And J.C. preformed more stable than A.M since we can see a shrinkage from distribution of J.C. than A.M. . which means J.C. can make 0 to 10 more balls average 5 balls than A.M. Thus, we conclude that J.C. is better.  Thus, there is evidence of shrinakge in the estimates. Since both of the mean of the at bat for players comes close to mean from their all probability of at bat.
+

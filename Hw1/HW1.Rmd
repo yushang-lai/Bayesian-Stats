@@ -1,0 +1,196 @@
+---
+title: "STATS205HW1"
+author: "Yuhshang"
+date: "1/8/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+### Problem 1 
+
+## (1) 
+$$p(\theta|x=3)=\frac{p(x=3|\theta)p(\theta)}{p(x=3)}$$
+```{r}
+ptheta   = c(.05,.05,.8,.05,.05);
+theta    = c(0.3,0.4,0.5,0.6,0.7);
+px3theta = 5*4*theta^3*(1-theta)^2*ptheta;
+px3      = 5*4*sum(theta^3*(1-theta)^2*ptheta);
+pthetax3 = px3theta/px3
+```
+Then, the posterior P(0.3 0.4 0.5 0.6 0.7) is
+```{r}
+print(pthetax3)
+```
+
+## (2)
+$$E(\theta) = \sum\theta*p(\theta|x=3)$$
+```{r}
+Ethetax3 = sum(pthetax3*theta);
+print(Ethetax3)
+```
+
+## (3) 
+$$P(\theta|x=6) = \frac{P(x=6|\theta)*P(\theta)}{P(x=6)})$$
+$$P(\theta|x=6) = \frac{P(x=6|\theta)*P(\theta|x=3)}{\sum_{\theta *}{P(x=6|\theta^*)*P(\theta^*|x=3)}})$$
+
+Thus, the new inference is
+```{r}
+px6      = choose(7,6) *sum(theta^6*(1-theta)*pthetax3);
+pthetax6 = choose(7,6) *theta^6*(1-theta)*pthetax3/px6;
+pthetax6
+```
+
+
+
+### Problem 2
+
+## (1)
+The prior probability that $\theta$ > 0.5 is:
+```{r}
+theta2  = c(0,0.125,0.25,0.375,.5,.625,.750,0.875,1);
+ptheta2 = c(.001,.001,.95,.008,.008,.008,.008,.008,.008);
+sum(ptheta2[6:9])
+```
+
+
+## (2)
+$$P(x=7) = \sum_{\theta} P(x=7|\theta)*P(\theta)$$
+```{r}
+px7     = sum(dbinom(7,size=10,prob = theta2)*ptheta2);
+print(px7)
+```
+
+## (3)
+```{r}
+px6_2   = sum(dbinom(6,size=10,prob=theta2)*ptheta2);
+ptheta2x6 = dbinom(6,size=10,prob=theta2)*ptheta2/px6_2;
+print(sum(ptheta2x6[6:9]))
+```
+
+### Problem 3
+
+## (1)
+I will consider binomial distribution for the likelihood function ~$Bin(n,\theta)$
+
+## (2)
+I will choose beta distribution since I have a probability of 20% success for the pior information.
+
+## (3)
+$$P(\theta|x=14) = \frac{P(x=14|\theta)*P(\theta)}{P(x=14)}$$
+$$P(\theta|x=14) = \frac{P(x=14|\theta)*Beta(1,4)}{P(x=14)}$$
+## (4)
+
+$$E[\theta] = \frac{a}{a+b} = 1/5$$
+$$E[\theta|x=14] = \frac{a+x}{a+b+m} = \frac{1+14}{5+30}=3/7$$
+## (5)
+
+$$P(\theta > 0.25|x=14) = pbeta(1,15,20)-pbeta(0.25,15,20)$$
+```{r}
+pthetal25 = pbeta(1,15,20)-pbeta(0.25,15,20);
+print(pthetal25)
+```
+
+## (6)
+
+The posterior theta gets larger then the pior after winter 2020.
+
+## (7)
+
+$$P(x=10|y) = \int_{\theta} Bin(10,\theta)* Beta(15,20) d \theta$$
+By Monte-Carlo, the probability that number of success s greater than 5 is:
+```{r}
+post_samples = rbeta(10000,15,20);
+pred_samples = sapply(post_samples,rbinom,size=20,n=1);
+sum(pred_samples>5)/length(pred_samples)
+```
+
+
+## (8)
+I will choose Beta(15,20) as the new pior which is the posterior of last inference.
+
+By formula in class notes, y is the new success number 10, m is the total new number 30,  a = 15, b =20
+$$\theta|x ~ Beta(a+y,b+m-y)$$
+
+$$E[\theta|x] = (a+y)/(a+b+m) = 25/65 =5/13 $$
+By (8), y = 10 , m = 30, thus new expection.
+
+
+
+
+### Problem 4
+
+## 1
+
+The likilihood I will use binomial distribtion with n = Clutch attempts and $\theta$ = Clutch makes / Clutch attempts. And the prior I will use uniform distribution which is beta(1,1). 
+
+## 2
+```{r}
+makes = c(64,72,55,27,75,24,28,66,40,13);
+attem = c(75,95,63,39,83,26,41,82,54,16);
+names = c('R.W.','J.H.','K.L.','L.J.','I.T.','S.C.','G.A.','J.W.','A.D.','K.D.')
+par(mfrow=c(2,5));
+x_lst = seq(0,1,0.0025);
+for(i in 1:10){
+y_lst = dbeta(x_lst,(1+makes[i]),(1+attem[i]-makes[i]));
+plot(x_lst,y_lst,main=names[i],xlab = 'probabilit',ylab = 'pdf',type="l",col = 'blue')
+plot.new
+}
+```
+## 3
+
+```{r}
+a =1;
+b =1;
+data0     = matrix(NA,11,7);
+post_mean = (a+makes)/(a+b+attem); 
+CI    = c(.05,.25,.5,.75,.95);
+data0[1,] = c('name quantile',CI,'mean');
+for (i in 2:11){
+  i = i-1;
+  data0[i+1,] = c(names[i],qbeta(CI,a+makes[i],1+attem[i]-makes[i]),post_mean[i])
+}
+table0 = data.frame(data0);
+table0
+```
+
+
+## 4
+
+By ploting the overall propotion on the beta distribution.
+```{r}
+op = c(.845,.847,.880,.674,.909,.898,.77,.801,.802,.875);
+makes = c(64,72,55,27,75,24,28,66,40,13);
+attem = c(75,95,63,39,83,26,41,82,54,16);
+names = c('R.W.','J.H.','K.L.','L.J.','I.T.','S.C.','G.A.','J.W.','A.D.','K.D.')
+par(mfrow=c(3,4));
+x_lst = seq(0,1,0.0025);
+for(i in 1:10){
+y_lst = dbeta(x_lst,(1+makes[i]),(1+attem[i]-makes[i]));
+plot(x_lst,y_lst,main=names[i],xlab = 'probabilit',ylab = 'pdf',type="l",col = 'blue')
+abline(v=op[i],col="red")
+plot.new
+}
+
+```
+```{r}
+
+
+lar = c(0)
+for(i in 1:10){
+  lar[i] = 1-pbeta(op[i],(1+makes[i]),(1+attem[i]-makes[i]))
+}
+
+data1     = matrix(NA,10,2);
+
+for (i in 1:10){
+  data1[i,] = c(names[i],lar[i])
+}
+table1 = data.frame(data1)
+table1
+
+```
+
+From the previous table, We find that R.W. L.J. S.C. all the more than half clutch numbers than than their overal precentage they should do better based on distribtion. Thus, they are different. They preform not as good as they should be. On the other hand J.H. G.A. A.D. and K.D.;s overall propotions too high than they should be based. So, they perform realy good in 2006-2007 sesaon.
+

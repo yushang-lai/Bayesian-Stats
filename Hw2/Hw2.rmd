@@ -1,0 +1,273 @@
+---
+title: "Stats105_Hw2"
+author: "Yuhshang"
+date: "1/21/2020"
+output: pdf_document
+---
+
+
+# Problem 1
+
+## (1)
+Note that
+$$x_{0.975}-\mu = \sigma *Z_{0.975}$$
+Where need to satisfy $\mu \sim N(\mu_{0},\tau_{0})$
+$$\tau = 1/\sigma^2$$
+$$Z_{0.975}=qnorm(0.975,1)$$
+```{r}
+mu0  = 40
+
+sig0 = (42-mu0) / 1.96
+print(sig0^2)
+tau0 = 1/sig0^2
+print(tau0)
+```
+
+conjugate Normal prior $\mu \sim N(40,\tau_{0}=0.9603647)$ 
+
+## (2)
+
+```{r}
+lst = c(38.6,42.4,57.5,40.5,51.7,67.1,33.4,60.9,64.1,40.1,40.7,6.4)
+mu1 = sum(lst)/length(lst)
+tau1 = 1/100
+print(mu1)
+print(tau1)
+```
+$$\mu_{1} \sim N(45.28333,0.01)$$
+Since nomal prior, normal likelihood gives conjugate distribution.
+
+Then, posterior is 
+$$ N(\frac{\tau_{0}}{n\tau_{1}+\tau_{0}}\mu_{0}+\frac{n\tau_{1}}{n\tau_{1}+\tau_{0}}\mu_{1},\frac{1}{n\tau_{1}+\tau_{0}})$$
+
+```{r}
+n   = length(lst)
+mu3 = tau0*mu0/(n*tau1+tau0) + n*tau1*mu1/(n*tau1+tau0) 
+std2 = 1/(n*tau1+tau0) 
+print(n)
+print(mu3)
+```
+
+$$N_{post}(40.58684,0.9256134)$$
+The posterior's mean also follows a normal distriution, the relative contribution is to increase the mean by a bit and reduces its std by a little bit. 
+
+## (3)
+
+```{r}
+x_lst = seq(30,55,by=0.001)
+plot(x_lst,dnorm(x_lst,mu0,(1/tau0)^0.5),type='l',col='blue',xlab='x',ylab='probability',ylim=c(0,.5),lwd = 2.5)
+lines(x_lst,dnorm(x_lst,mu3,(std2)^0.5),type='l',col='red',xlab='x',ylab='probability',ylim=c(0,.5),lwd = 2.5)
+legend('topleft',col=c('blue','red'),legend= c('prior distribution','posterior distribution'),lwd =c(2.5,2.5),cex = 0.65)
+```
+The posterior mean larger than that of pior. The new distribution is like a shift of prior to right and the mean gets a bit larger.
+
+
+## (4)
+```{r}
+print(qnorm(c(0.1,0.9),mu3,(std2)^0.5))
+```
+
+$$P_{post}(\mu<39.35387|Data)=0.1$$
+$$P_{post}(\mu>41.81976|Data)=0.9$$
+
+## (5)
+Note that $log \mu$ has mo definition if $\mu \leq 0$
+and that since $p(\mu|x) \sim e^{-x^2}$ which converges much faster that $\log \mu$ when x gets larger. Thus $log \mu P(\mu|x)->0$ as $x-> infinity$
+
+Thus, 
+$$E[\log \mu] = \int_{0^+}^{Inf} \log \mu \cdot p(\mu|x) dx \approx \int_{qnorm(0.0000001,mu_{post},1/tau_{post})}^{qnorm(0.9999999,mu_{post},1/tau_{post})} \log \mu \cdot p(\mu|x) dx \approx 3.703161$$
+```{r}
+interva = qnorm(c(0.0000001,0.9999999),mu3,std2^0.5)
+fun <- function(x) log(x) * dnorm(x,mu3,std2^0.5)
+Q <- integrate(fun,interva[1],interva[2])
+print(Q)
+    
+```
+
+
+# Problem 2
+## (1)
+
+$$\lambda \sim Gamma(a,b)$$
+$$Y|\lambda \sim poisson (N\lambda)$$
+
+$$\lambda_{posterior}|Y \sim Gamma(a+Y,b+N)$$
+Liklihood,
+$$f(Y|\lambda)=\frac{e^{-N\lambda}\cdot(N\lambda)^y}{y!}$$
+Pior,
+$$f(\lambda) = \frac{b^a}{\gamma(a)}\lambda^{a-1}e^{-b \lambda}$$
+$$f(\lambda|y)=\frac{f(Y|\lambda)f(\lambda)}{f(y)}$$
+$$f(\lambda|y) \propto e^{-\lambda N}(N \lambda)^y \cdot  \lambda^{a-1}e^{-b \lambda} \propto \lambda^{y+a-1}e^{-(\lambda+b)\lambda}$$
+$$\lambda \sim Gamma(y+a,N+b)$$
+Assum2 $Y_{i} \sim i.i.d Poisson(N \lambda)$
+$$f( Y_{1},Y_{2}...Y_{n}|\lambda)= f( Y_{1}|\lambda) \cdot f( Y_{2}|\lambda)\cdots f( Y_{n}|\lambda)$$
+
+$$f( \lambda|Y_{1},Y_{2}...Y_{n}) = \frac{f( Y_{1}|\lambda) \cdot f( Y_{2}|\lambda)\cdots f( Y_{n}|\lambda) f(\lambda)}{f(Y_{1},Y_{2}...Y_{n})}$$
+
+$$f( \lambda|Y_{1},Y_{2}...Y_{n})\propto e^{-\lambda N}(N \lambda)^{y_{1}} \cdot e^{-\lambda N}(N \lambda)^{y_{2}} \cdots e^{-\lambda N}(N \lambda)^{y_{n}}\cdot  \lambda^{a-1}e^{-b \lambda} $$
+$$ \propto e^{-(nN+b) \lambda}(N \lambda)^{a+\sum_{i}^{n} y_{i}}$$
+
+$$\lambda_{posterior}|Y \sim Gamma(a+\sum_{i}^{n}Y_{i},b+nN)$$
+
+```{r}
+Y_lst = c(rep(1,12),rep(2,6),rep(10,2))
+print(sum(Y_lst))
+```
+## (2)
+
+$$\lambda_{posterior}|Y \sim Gamma(44.01,50.01)$$
+```{r}
+a = 0.01
+b = 0.01
+N = 50
+ap =  sum(Y_lst)+a
+bp =  (N+b)
+x_lst = seq(0,10,by=0.001)
+y_lst = dgamma(x_lst,shape=ap,scale=1/bp)
+plot(x_lst,y_lst,type='l',col='blue',xlab='lambda',ylab='probability',lwd = 2.5,main='posterior')
+inter = qgamma(c(0.025,0.975), shape=ap, scale =1/bp)
+I= x_lst>qgamma(.025,shape=ap,scale=1/bp)
+x_lstnew = x_lst[I==TRUE]
+I= x_lstnew <qgamma(.975,shape=ap,scale=1/bp)
+y_lstnew = dgamma(x_lstnew,shape=ap,scale=1/bp)
+polygon(c(x_lstnew[I],rev(x_lstnew[I])),c(y_lstnew[I],
++ rep(0,sum(I))),col="red",density=30,border=NA)
+abline(v = inter[1], col="red", lwd=3, lty=2)
+abline(v = inter[2], col="red", lwd=3, lty=2)
+```
+```{r}
+print(inter)
+mean1 =  ap/bp
+print(mean1)
+```
+
+The 95% credible interval is (0.6394519,1.1584123) and mean is 0.880024
+
+```{r}
+a = 0.01
+b = 0.01
+N = 50
+ap =  sum(Y_lst)+a
+bp =  (N+b)
+x_lst = seq(0,10,by=0.001)
+y_lst = dgamma(x_lst,shape=ap,scale=1/bp)
+plot(x_lst,y_lst,type='l',col='blue',xlab='lambda',ylab='probability',lwd = 2.5)
+inter = qgamma(c(0.025,0.975), shape=ap, scale =1/bp)
+print(inter)
+I= x_lst>qgamma(.025,shape=ap,scale=1/bp)
+x_lstnew = x_lst[I==TRUE]
+I= x_lstnew <qgamma(.975,shape=ap,scale=1/bp)
+y_lstnew = dgamma(x_lstnew,shape=ap,scale=1/bp)
+mean1 =  ap/bp
+print(mean1)
+abline(v = mean1, col="blue", lwd=1.2, lty=2)
+
+a = 1
+b = 1
+N = 50
+ap =  sum(Y_lst)+a
+bp =  (N+b)
+x_lst = seq(0,10,by=0.001)
+y_lst = dgamma(x_lst,shape=ap,scale=1/bp)
+lines(x_lst,y_lst,type='l',col='red',xlab='lambda',ylab='probability',lwd = 2.5)
+inter2 = qgamma(c(0.025,0.975), shape=ap, scale =1/bp)
+print(inter2)
+I= x_lst>qgamma(.025,shape=ap,scale=1/bp)
+x_lstnew = x_lst[I==TRUE]
+I= x_lstnew <qgamma(.975,shape=ap,scale=1/bp)
+y_lstnew = dgamma(x_lstnew,shape=ap,scale=1/bp)
+mean2 =  ap/bp
+abline(v = mean1, col="black", lwd=1.2, lty=2)
+print(mean2)
+
+a = 0.1
+b = 0.1
+N = 50
+ap =  sum(Y_lst)+a
+bp =  (N+b)
+x_lst = seq(0,10,by=0.001)
+y_lst = dgamma(x_lst,shape=ap,scale=1/bp)
+lines(x_lst,y_lst,type='l',col='yellow',xlab='lambda',ylab='probability',lwd = 2.5)
+inter3 = qgamma(c(0.025,0.975), shape=ap, scale =1/bp)
+print(inter3)
+I= x_lst>qgamma(.025,shape=ap,scale=1/bp)
+x_lstnew = x_lst[I==TRUE]
+I= x_lstnew <qgamma(.975,shape=ap,scale=1/bp)
+y_lstnew = dgamma(x_lstnew,shape=ap,scale=1/bp)
+mean3 =  ap/bp
+abline(v = mean3, col="black", lwd=1.2, lty=2)
+print(mean3)
+
+legend('topright',col=c('blue','red','yellow'),legend= c('pior a =b = 0.01','pior a =b = 1','pior a =b = 0.1'),lwd =c(2.5,2.5),cex = 0.65)
+```
+
+
+```{r}
+qtls = matrix(NA,3,3)
+qtls[1,] = c(inter[1],inter[2],mean1)
+qtls[2,] = c(inter3[1],inter3[2],mean3)
+qtls[3,] = c(inter2[1],inter2[2],mean2)
+df = data.frame(qtls)
+colnames(df) = c('p(lambda<x)=0.025','p(lambda<x)=0.975','mean')
+row.names(df) = c('pior gamma(0.01,0.01)','pior gamma(0.1,0.1)','pior gamma(1,1)')
+knitr::kable(df, format = "markdown")
+```
+
+The credible interval 95% and the mean are pretty similar for Gamma(0.1,0.1) and Gamma(1,1), Gamma(1,1). The sensitvity for this change of pior is low.
+
+## (4)
+
+```{r}
+Y_lst = c(rep(1,12),rep(2,6),rep(10,2),rep(0,30))
+a = 0.01
+b = 0.01
+N = 50
+ap =  sum(Y_lst)+a
+bp =  (N+b)
+x_lst = seq(0,10,by=0.001)
+y_lst = dgamma(x_lst,shape=ap,scale=1/bp)
+hist(Y_lst,breaks=40,freq=FALSE,ylim = c(0,5),xlim=c(0,10),las=1)
+lines(x_lst,y_lst,type='l',col='blue',xlab='lambda',ylab='probability',lwd = 2.5)
+inter = qgamma(c(0.025,0.975), shape=ap, scale =1/bp)
+I= x_lst>qgamma(.025,shape=ap,scale=1/bp)
+x_lstnew = x_lst[I==TRUE]
+I= x_lstnew <qgamma(.975,shape=ap,scale=1/bp)
+y_lstnew = dgamma(x_lstnew,shape=ap,scale=1/bp)
+polygon(c(x_lstnew[I],rev(x_lstnew[I])),c(y_lstnew[I],+ rep(0,sum(I))),col="red",density=30,border=NA)
+mean1 =  ap/bp
+abline(v = mean1, col="blue", lwd=1.2, lty=2)
+```
+The posterior distribution dosen't represent the high ASE patient well since it says the pobability denssity is pretty low at 10 side effects and 0 side effects.
+
+## (5)
+```{r}
+post_samples = rgamma(1000000, shape=ap, scale=1/bp)
+pred_samples = sapply(post_samples, rpois, n=1)
+hist(pred_samples, breaks = 20, freq = FALSE)
+p = sum(pred_samples>1) / length(pred_samples)
+print(p)
+```
+
+The posterior probablity that has higher side effect than one is 
+around 22%. The result is not sensitvity to prior since the posterior possion gamma distribution is not sensitive to the prior.
+
+
+# Problem 3
+From https://en.wikipedia.org/wiki/Gamma_distribution, properties Median calculation
+$$100=var=\frac{a}{b^2} => a=100b^2=>b = \frac{\sqrt{a}}{10}$$
+$$\mu = \frac{a}{b} = 10 \sqrt{a}$$
+$$75= median \approx \mu  \frac{3a-0.8}{3a+0.2} = 10 \sqrt{a} \frac{3a-0.8}{3a+0.2} $$
+```{r}
+fun <- function (x) 10*(x)^.5*(3*x-0.8)/(3*x+0.2)-75
+a <- uniroot(fun, c(0, 100))$root
+b = sqrt(a)/10
+print(a)
+print(b)
+```
+
+$$a=56.9139, b= 0.7544132 $$
+
+```{r}
+ratt = 1-pgamma(75,a,b)
+```
+$$P(\lambda>\lambda_{0})= 0.5000023$$

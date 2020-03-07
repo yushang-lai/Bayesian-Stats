@@ -1,0 +1,759 @@
+---
+title: "Hw4"
+author: "Yushang Lai"
+date: "3/6/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(epiR)
+library(tidyverse)
+library(knitr)
+library(pander)
+library(R2jags)
+library(bayesplot )
+library(coda)
+```
+
+# Problem 1
+
+```{r}
+FEV.data = read.table(file="FullFEVdataExercise9-21.txt",header=T,sep="")
+attach(FEV.data)
+head(FEV.data)
+pairs(~Age+Hgt+Male+Smoke+FEV,labels=c("Age","Hgt","Male","Smoke","FEV"),data =FEV.data)
+```
+## (a)
+
+Compare Age and FEV, Height and FEV we can see positive relationship tendency as age increases, FEV will also increases; as height increases FEV will increases.
+
+Compare Male and FEV, we can see that Male has larger FEV value interval than women.
+
+Compare Smoke and FEV, we can see that Nosmoker has lareger FEV value interval than women.
+
+
+## (b)
+
+### (prior construction)
+
+Choose BCJ method of constructing an informative prior $\beta$. BIDA (p234)
+$$\beta \sim N_{r}(\beta_{0},C_{0}) \perp \tau \sim Gamma(a,b) $$
+$$ E[Y|\tilde X] = \tilde m = \tilde X \beta \sim N_{r}(\tilde Y,D(\tilde w))$$
+$$\beta \sim N_{r}(\tilde X ^{-1} \tilde Y , \tilde X^{-1} D(\tilde w) \tilde X ^{-1 '})$$ 
+Note we can choose mean(beta) = 0 if we wnat high degree predictor.
+$$\sqrt w = \frac{99th \hspace{0.1cm} percentile-\tilde m}{2.33} $$
+Since no expert expetation, we choose
+$$\hspace{0.1cm} a=0.001,b=0.001 \hspace{0.1cm}$$
+Note that we will use the method in week 8 disscusion to modify beta and incov to make it hanlde higher dimension features.
+
+```{r}
+expert.info = (rbind(c(18,70,1,0),c(16,70,0,1),c(13,66,1,1),c(12,60,0,1)))
+print(expert.info)
+expert.mean = c(4.0,4.2,3.4,2.7)
+expert.upper = c(4.8,5.0,4.0,3.5)
+weight.mat = diag(((expert.upper-expert.mean)/2.33)^2)
+```
+
+
+```{r}
+library(robustHD)
+Age.st = Age
+Hgt.st = Hgt
+FEV.st = FEV
+Age_Male.st = Age*Male
+Age_Hgt.st = Age*Hgt
+Age_Smoke.st = Age*Smoke
+Age2.st = Age^2
+Hgt2.st = Hgt^2
+```
+
+### (predictor selection)
+(1) linear
+(2) linear + age*male 
+(3) linear + age*height
+(4) linear + age*smoke
+(5) linear + age^2 
+(6) linear         + height^2
+(7) linear + age^2 + height^2
+
+
+
+```{r}
+X.mat <- list()
+X.mat[[1]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male))
+X.mat[[2]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male)+Age_Male.st)
+X.mat[[3]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male)+Age_Hgt.st)
+X.mat[[4]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male)+Age_Smoke.st)
+X.mat[[5]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male)+Age2.st)
+X.mat[[6]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male)+Hgt2.st)
+```
+
+```{r}
+X.mat_cal <- list()
+X.mat_cal[[1]] = cbind(c(1,1,1,1),expert.info)
+X.mat_cal[[2]] = cbind(X.mat_cal[[1]],c(expert.info[,1]*expert.info[,3]))
+X.mat_cal[[3]] = cbind(X.mat_cal[[1]],c(expert.info[,1]*expert.info[,2]))
+X.mat_cal[[4]] = cbind(X.mat_cal[[1]],c(expert.info[,1]*expert.info[,4]))
+X.mat_cal[[5]] = cbind(X.mat_cal[[1]],c(expert.info[,1]*expert.info[,1]))
+X.mat_cal[[6]] = cbind(X.mat_cal[[1]],c(expert.info[,2]*expert.info[,2]))
+X.mat_cal[[7]] = cbind(X.mat_cal[[6]],c(expert.info[,1]*expert.info[,1]))
+
+mu.lst <- list()
+C0inv <- list()
+XnegY = solve(X.mat_cal[[1]][,1:4],expert.mean)
+XinvDXinvt = solve(X.mat_cal[[1]][,1:4])*weight.mat*t(solve(X.mat_cal[[1]][,1:4]))
+for(i in 1:7)
+{
+  n = dim(X.mat_cal[[i]])[1]
+  m = dim(X.mat_cal[[i]])[2]
+  mu.lst[[i]] = matrix(0L, nrow =m, ncol = 1)
+  mu.lst[[i]][1:4] = XnegY 
+  C0inv[[i]] = diag(0.001, m, m) 
+  C0inv[[i]][1:4,1:4] = XinvDXinvt
+}
+```
+
+```{r}
+j = 1
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[4]*Xmat[i,5]
+  like[i] <- dnorm(Y[i],mu[i],tau)
+  invlike[i] <- 1/like[i]
+  pw_logf[i] <- log(like[i])
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+}"
+```
+
+
+```{r}
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0)))
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+```
+
+```{r}
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+```
+```{r}
+DIC.lst <- c()
+BIC.lst <- c()
+LPML.lst <- c()
+r=dim(X.mat[[j]])[2]
+n=dim(X.mat[[j]])[1]
+pm_tau=FEV.fit1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=FEV.fit1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((FEV-(pm_coeff[1]+pm_coeff[2]*Age.st+pm_coeff[3]*Hgt.st+pm_coeff[4]*Smoke+pm_coeff[5]*Male))^2)+ (r+1)*log(n)
+CPO1 <- 1/FEV.fit1$BUGSoutput$mean$invlike ## invlike is a vector of length n
+LPML1 <- sum(log(CPO1))
+DIC.lst = c(DIC.lst,FEV.fit1$BUGSoutput$DIC)
+BIC.lst = c(BIC.lst,BIC1)
+LPML.lst= c(LPML.lst,LPML1)
+```
+
+
+```{r}
+j = 2
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+  like[i] <- dnorm(Y[i],mu[i],tau)
+  invlike[i] <- 1/like[i]
+  pw_logf[i] <- log(like[i])
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+```
+
+
+```{r}
+r=dim(X.mat[[j]])[2]
+n=dim(X.mat[[j]])[1]
+pm_tau=FEV.fit1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=FEV.fit1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((FEV-(pm_coeff[1]+pm_coeff[2]*Age.st+pm_coeff[3]*Hgt.st+pm_coeff[4]*Smoke+pm_coeff[5]*Male+pm_coeff[6]*Male*Age))^2)+ (r+1)*log(n)
+CPO1 <- 1/FEV.fit1$BUGSoutput$mean$invlike ## invlike is a vector of length n
+LPML1 <- sum(log(CPO1))
+DIC.lst = c(DIC.lst,FEV.fit1$BUGSoutput$DIC)
+BIC.lst = c(BIC.lst,BIC1)
+LPML.lst= c(LPML.lst,LPML1)
+```
+
+
+
+
+
+```{r}
+j = 3
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+  like[i] <- dnorm(Y[i],mu[i],tau)
+  invlike[i] <- 1/like[i]
+  pw_logf[i] <- log(like[i])
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+r=dim(X.mat[[j]])[2]
+n=dim(X.mat[[j]])[1]
+pm_tau=FEV.fit1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=FEV.fit1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((FEV-(pm_coeff[1]+pm_coeff[2]*Age.st+pm_coeff[3]*Hgt.st+pm_coeff[4]*Smoke+pm_coeff[5]*Male+pm_coeff[6]*Age*Hgt))^2)+ (r+1)*log(n)
+CPO1 <- 1/FEV.fit1$BUGSoutput$mean$invlike ## invlike is a vector of length n
+LPML1 <- sum(log(CPO1))
+DIC.lst = c(DIC.lst,FEV.fit1$BUGSoutput$DIC)
+BIC.lst = c(BIC.lst,BIC1)
+LPML.lst= c(LPML.lst,LPML1)
+
+```
+
+```{r}
+j = 4
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+  like[i] <- dnorm(Y[i],mu[i],tau)
+  invlike[i] <- 1/like[i]
+  pw_logf[i] <- log(like[i])
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+r=dim(X.mat[[j]])[2]
+n=dim(X.mat[[j]])[1]
+pm_tau=FEV.fit1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=FEV.fit1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((FEV-(pm_coeff[1]+pm_coeff[2]*Age.st+pm_coeff[3]*Hgt.st+pm_coeff[4]*Smoke+pm_coeff[5]*Male+pm_coeff[6]*Age*Smoke))^2)+ (r+1)*log(n)
+CPO1 <- 1/FEV.fit1$BUGSoutput$mean$invlike ## invlike is a vector of length n
+LPML1 <- sum(log(CPO1))
+DIC.lst = c(DIC.lst,FEV.fit1$BUGSoutput$DIC)
+BIC.lst = c(BIC.lst,BIC1)
+LPML.lst= c(LPML.lst,LPML1)
+
+
+```
+
+
+
+
+
+
+```{r}
+j = 5
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+  like[i] <- dnorm(Y[i],mu[i],tau)
+  invlike[i] <- 1/like[i]
+  pw_logf[i] <- log(like[i])
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+r=dim(X.mat[[j]])[2]
+n=dim(X.mat[[j]])[1]
+pm_tau=FEV.fit1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=FEV.fit1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((FEV-(pm_coeff[1]+pm_coeff[2]*Age.st+pm_coeff[3]*Hgt.st+pm_coeff[4]*Smoke+pm_coeff[5]*Male+pm_coeff[6]*Age*Age))^2)+ (r+1)*log(n)
+CPO1 <- 1/FEV.fit1$BUGSoutput$mean$invlike ## invlike is a vector of length n
+LPML1 <- sum(log(CPO1))
+DIC.lst = c(DIC.lst,FEV.fit1$BUGSoutput$DIC)
+BIC.lst = c(BIC.lst,BIC1)
+LPML.lst= c(LPML.lst,LPML1)
+```
+
+```{r}
+j = 6
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+  like[i] <- dnorm(Y[i],mu[i],tau)
+  invlike[i] <- 1/like[i]
+  pw_logf[i] <- log(like[i])
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+r=dim(X.mat[[j]])[2]
+n=dim(X.mat[[j]])[1]
+pm_tau=FEV.fit1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=FEV.fit1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((FEV-(pm_coeff[1]+pm_coeff[2]*Age.st+pm_coeff[3]*Hgt.st+pm_coeff[4]*Smoke+pm_coeff[5]*Male+pm_coeff[6]*Hgt*Hgt))^2)+ (r+1)*log(n)
+CPO1 <- 1/FEV.fit1$BUGSoutput$mean$invlike ## invlike is a vector of length n
+LPML1 <- sum(log(CPO1))
+DIC.lst = c(DIC.lst,FEV.fit1$BUGSoutput$DIC)
+BIC.lst = c(BIC.lst,BIC1)
+LPML.lst= c(LPML.lst,LPML1)
+```
+
+```{r}
+print(DIC.lst)
+print(BIC.lst)
+print(LPML.lst)
+```
+### (predictor selection)
+
+```{r}
+df <- cbind(c("model 1","model 2","model 3","model 4","model 5","model 6"),DIC.lst,BIC.lst,LPML.lst)
+pander(df)
+```
+
+I will choose model 3 for it has least DIC, BIC and has highest LPML
+
+
+
+### (convergence and model diagostics)
+
+
+
+```{r}
+FEV.fit1$BUGSoutput$DIC
+```
+X.mat[[3]] = model.matrix(~ Age.st+Hgt.st+as.factor(Smoke)+as.factor(Male)+Age_Hgt.st)
+
+```{r}
+j = 3
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+```
+
+### (Convergence and Model Diagnosis)
+
+```{r}
+jags.mcmc = as.mcmc(FEV.fit1)
+mcmc_trace(jags.mcmc,pars=c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]","tau"))
+```
+
+From the above plots, we can see that our model parameters converges and mix well. 
+
+
+### (c)
+
+#### (posterior reference)
+```{r}
+FEV.fit1
+```
+
+Note that beta[2] is almost negative, this is not without reasons, since feature six is age*height which will incease our FEV simulation a lot.
+
+
+```{r}
+j = 3
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.001, b=0.001## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+
+mean15hgtm66ns = beta[1] + beta[2]*15 + beta[3]*66 + beta[4]*0+beta[5]*1+beta[6]*15*66
+mean15hgtm66s = beta[1] + beta[2]*15 + beta[3]*66 + beta[4]*1+beta[5]*1+beta[6]*15*66
+mean16hgtfm66ns = beta[1] + beta[2]*16 + beta[3]*66 + beta[4]*0+beta[5]*0+beta[6]*16*66
+mean16hgtfm66s = beta[1] + beta[2]*16 + beta[3]*66 + beta[4]*0+beta[5]*1+beta[6]*16*66
+mean17hgtm70s = beta[1] + beta[2]*17 + beta[3]*70 + beta[4]*1+beta[5]*1+beta[6]*17*70
+mean17hgtm70ns = beta[1] + beta[2]*17 + beta[3]*70 + beta[4]*0+beta[5]*1+beta[6]*17*70
+mean17hgtfm70s = beta[1] + beta[2]*17 + beta[3]*70 + beta[4]*1+beta[5]*0+beta[6]*17*70
+mean17hgtfm70ns = beta[1] + beta[2]*17 + beta[3]*70 + beta[4]*0+beta[5]*0+beta[6]*17*70
+
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("mean15hgtm66ns","mean15hgtm66s","mean16hgtfm66ns","mean16hgtfm66s","mean17hgtm70s","mean17hgtm70ns","mean17hgtfm70s","mean17hgtfm70ns","beta","mu")
+
+FEV.fit1 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+which(Smoke ==1)
+```
+#### (subpopulation means)
+```{r}
+# FEV.fit1$BUGSoutput$sims.matrix[,which(Smoke ==1)]
+plot(main="Smoker vs. Nosmoker",density(FEV.fit1$BUGSoutput$mean$mu[which(Smoke ==1)]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,0.8))
+lines(density(FEV.fit1$BUGSoutput$mean$mu[which(Smoke ==0)]),col='green',type='l',xlab ='mu',lwd=3,xlim=c(0,5))
+legend(0.3,0.5,legend=c("Smoker","Nonsmoker"),col=c("red","green"),lty=1:2, cex=0.8)
+```
+
+```{r}
+plot(main="Men Somker Nonsmoker",density(FEV.fit1$BUGSoutput$mean$mu[which(Male ==1 & Smoke ==1)]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,1.5))
+lines(density(FEV.fit1$BUGSoutput$mean$mu[which(Male ==1& Smoke ==0)]),col='green',type='l',xlab ='mu',lwd=3,xlim=c(0,5))
+legend(0.3,0.5,legend=c("Man Smoker","Man NonSmoker"),col=c("red","green"),lty=1:2, cex=0.8)
+```
+
+```{r}
+plot(main="Women Somker Nonsmoker",density(FEV.fit1$BUGSoutput$mean$mu[which(Male ==0 & Smoke ==1)]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,1.5))
+lines(density(FEV.fit1$BUGSoutput$mean$mu[which(Male ==0 & Smoke ==0)]),col='green',type='l',xlab ='mu',lwd=3,xlim=c(0,5))
+legend(0.3,0.5,legend=c("Women Smoker","Women Nonsmoker"),col=c("red","green"),lty=1:2, cex=0.8)
+```
+
+```{r}
+plot(main="Young Somker Nonsmoker",density(FEV.fit1$BUGSoutput$mean$mu[which(Age <13 & Smoke ==1)]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,1.5))
+lines(density(FEV.fit1$BUGSoutput$mean$mu[which(Age<12 & Smoke ==0)]),col='green',type='l',xlab ='mu',lwd=3,xlim=c(0,5))
+legend(0.3,0.5,legend=c("young Smoker","young Nonsmoker"),col=c("red","green"),lty=1:2, cex=0.8)
+```
+
+
+
+
+
+```{r}
+plot(main="Elder Somker Nonsmoker",density(FEV.fit1$BUGSoutput$mean$mu[which(Age >=13 & Smoke ==1)]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,1.5))
+lines(density(FEV.fit1$BUGSoutput$mean$mu[which(Age>=12 & Smoke ==0)]),col='green',type='l',xlab ='mu',lwd=3,xlim=c(0,5))
+legend(0.3,0.5,legend=c("Elder Smoker","Elder Nonsmoker"),col=c("red","green"),lty=1:2, cex=0.8)
+```
+
+
+
+
+```{r}
+
+library(MASS)
+fit <- fitdistr(FEV.fit1$BUGSoutput$mean$mu[which(Age >=13 & Smoke ==1)], "normal")
+para <- fit$estimate
+qnorm(c(0.05,0.95),mean=para[1],sd=para[2])
+```
+
+
+
+```{r}
+Lower_lst = c('5%')
+Upper_lst = c('95%')
+mean_lst = c('mean')
+
+neam_lst =list(FEV.fit1$BUGSoutput$mean$mu[which(Smoke ==1)],
+FEV.fit1$BUGSoutput$mean$mu[which(Smoke ==0)],
+FEV.fit1$BUGSoutput$mean$mu[which(Male ==1 & Smoke ==1)],
+FEV.fit1$BUGSoutput$mean$mu[which(Male ==1 & Smoke ==0)],
+FEV.fit1$BUGSoutput$mean$mu[which(Male ==0 & Smoke ==1)],
+FEV.fit1$BUGSoutput$mean$mu[which(Male ==0 & Smoke ==1)],
+FEV.fit1$BUGSoutput$mean$mu[which(Age <13 & Smoke ==1)],
+FEV.fit1$BUGSoutput$mean$mu[which(Age <13 & Smoke ==0)],
+FEV.fit1$BUGSoutput$mean$mu[which(Age >=13 & Smoke ==1)],
+FEV.fit1$BUGSoutput$mean$mu[which(Age >=13 & Smoke ==0)])
+
+for (i in 1:10){
+  fit <- fitdistr(neam_lst[[i]], "normal")
+  para <- fit$estimate
+  num = qnorm(c(0.05,0.95),mean=para[1],sd=para[2])
+  Lower_lst = c(Lower_lst,num[1])
+  Upper_lst = c(Upper_lst,num[2])
+  mean_lst = c(mean_lst,para[1])
+  }
+df <- cbind(c("Group Name","Smoker","NonSmoker","Man Smoker","Man Nonsmoker","Wome Smoker","Women Nonsmoker","Young Smoker","Young NonSmoker","Elder Smoker","Elder,NonSmoker"),Lower_lst,mean_lst,Upper_lst)
+pander(df)
+
+
+```
+From the above figures and table, by seeing the subpopulation means distribution we see that when age is young, both men and women who smoke will have larger FEV, as the age gets larger enough,Smoke won't affect too much on FEV. However, we see that only less than 70 out of 675 are somking. Thus, we will see how the the prediction goes in the next few steps.
+
+
+## (d)
+
+```{r}
+FEV.fit1$BUGSoutput$summary[7:15,]
+```
+
+
+```{r}
+df <- rbind(c('Age 15 Hgt 66 Male Nonsmoker',FEV.fit1$BUGSoutput$summary[8,]),
+            c('Age 15 Hgt 66 Male Smoker',FEV.fit1$BUGSoutput$summary[9,]),
+            c('Age 16 Hgt 66 Female Nonsmoker',FEV.fit1$BUGSoutput$summary[10,]),
+            c('Age 16 Hgt 66 Female Smoker',FEV.fit1$BUGSoutput$summary[11,]),
+            c('Age 17 Hgt 70 Female NonSmoker',FEV.fit1$BUGSoutput$summary[12,]),
+            c('Age 17 Hgt 70 Female Smoker',FEV.fit1$BUGSoutput$summary[13,]),
+            c('Age 17 Hgt 70 Male NonSmoker',FEV.fit1$BUGSoutput$summary[14,]),
+            c('Age 17 Hgt 70 Male NonSmoker',FEV.fit1$BUGSoutput$summary[15,]))
+pander(df)
+```
+```{r}
+library(bayesplot)
+par(mfrow=c(4,2))
+jags.mcmc = as.mcmc(FEV.fit1)
+mcmc_dens(jags.mcmc,pars=c("mean15hgtm66ns","mean15hgtm66s","mean16hgtfm66ns","mean16hgtfm66s","mean17hgtm70s","mean17hgtm70ns","mean17hgtfm70s","mean17hgtfm70ns"))
+```
+
+```{r}
+color_scheme_set("blue")
+par(mfrow=c(1,1))
+figg = mcmc_intervals(jags.mcmc,pars=c("mean15hgtm66ns","mean15hgtm66s","mean16hgtfm66ns","mean16hgtfm66s","mean17hgtm70s","mean17hgtm70ns","mean17hgtfm70s","mean17hgtfm70ns"))
+figg
+```
+
+##(e)
+
+```{r}
+j = 3
+jags.data=list(
+  Y=FEV,
+  Xmat=X.mat[[j]],
+  r=dim(X.mat[[j]])[2],
+  n=dim(X.mat[[j]])[1],
+  beta0 = mu.lst[[j]],
+  Coin = C0inv[[j]],
+  a=0.1, b=0.1## diffuse prior
+)
+
+model_1 <- "model{
+  for(i in 1:n){
+  Y[i] ~ dnorm(mu[i], tau)
+  mu[i] <- beta[1] + beta[2]*Xmat[i,2] + beta[3]*Xmat[i,3] + beta[4]*Xmat[i,4]+beta[5]*Xmat[i,5]+beta[6]*Xmat[i,6]
+}
+
+beta[1:r] ~ dmnorm(beta0,Coin) 
+tau ~ dgamma(a, b)
+
+}"
+
+jags.inits <- list(list(tau=1,beta=c(0,0,0,0,0,0)))
+jags.param <- c("beta","tau","mu")
+
+FEV.fit2 <- jags(jags.data, jags.inits, jags.param,model.file=textConnection(model_1),n.chains=1, n.iter=12000, n.thin=1, n.burnin=2000)
+
+```
+
+
+```{r}
+plot(main="tau~Gamma(0.001,0.001) vs Gamma(0.1,0.1) ",density(FEV.fit1$BUGSoutput$mean$mu),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,0.5))
+lines(density(FEV.fit2$BUGSoutput$mean$mu),col='green',type='l',xlab ='mu',lwd=3,xlim=c(0,5),ylim=c(0,0.5))
+
+
+legend(0.3,0.5,legend=c("Gamma(0.001,0.001)","Gamma(0.1,0.1)"),col=c("red","green"),lty=1:2, cex=0.8)
+```
+```{r}
+# FEV.fit1$BUGSoutput$summary[1:6,]
+jags.mcmc2 = as.mcmc(FEV.fit2)
+color_scheme_set("blue")
+par(mfrow=c(2,1))
+figg = mcmc_intervals(jags.mcmc,pars=c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"))
+figg2 = mcmc_intervals(jags.mcmc2,pars=c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"))
+plot(figg)
+```
+Above is prior gamma(0.001,0.001), below is gamma(0.1,0.1)
+
+```{r}
+plot(figg2)
+```
+
+From the above plot we can see that the posterior is pretty much the same for both prior with the beta[1] in prior gamma (0.1,0.1) case a little bit latter than that of prior gamma(0.001,0.001) thus the sensitivity is low for this problem.
+
+
+##(f)
+
+We compare four models for prediction and find that the model 3 we propose perfroms best, (3) linear full model + age*height. Then we test that this model converges and mixs well. From comparsion of the subpopulations means, we find that when age is young, both men and women who smoke will have larger FEV, as the age gets larger enough,Smoke won't affect too much on FEV.However, since only 60+ out of 650+ adolescents smoke. we need future analysis. Then, we checked for several groups Age 15 Hgt 66 Male Non/smoker,Age 16 Hgt 66 Female Non/smoker,Age 17 Hgt 70 Female Non/Smoker,Age 17 Hgt 70 Male Non/Smoker. Their results distribution are reasonable compre to expert provided prior. The results show that adolescents who smoke will have less FEV which makes sense since smoke may do harm o lung. This is not withour reason, if we see the beta[4] (Smoke coefficent) distribution. We almost 99% say its negative in the model which will consequently reduce the FEV. Finally, by testing sensitivity, we change prior Gamma(0.001,0.001) to Gamma (0.1.0.1) and find that the prosteior mean distribution of mu as well as the distribution of beta don't change much. Thus, we get that the sensitivity is low.
+
+
+
+
+# Problem 2
+
+Normal distribution model,
+$$Y_{i} \sim N(\mu_{i},\frac{1}{\tau_{i}})$$
+Guess Linear model for X,
+$$\mu_{i} = \beta_{0} + \beta_{1} x_{i}$$
+Proper reference prior, almost no information from prior,
+$$\tau \sim Gamma(0.001,0.001)$$
+$$\beta_{i} \sim N(0,0.001)$$
+
+
+```{r}
+#
+Ytr = c(37.01,26.51,36.51,40.70,37.10,33.90,41.80,33.40,23.30,35.20,34.90,33.10,22.70,39.70,31.80,31.70)
+Xtr = c(7.20,-11.71,12.32,14.28,6.31,3.16,12.70,-0.17,-12.86,0.92,4.77,-0.96,-16.04,10.62,2.66,-10.99)
+
+jags.data = list(
+  Y = Ytr,
+  X = Xtr,
+  n = length(Ytr),
+  b = 0.001,
+  c = 0.001
+)
+
+model_reg <-
+"model{
+for(i in 1:n){
+Y[i] ~ dnorm(mu[i],tau)
+mu[i] = beta[1]+beta[2]*X[i]
+}
+
+beta[1] ~ dnorm(0,b)
+beta[2] ~ dnorm(0,b)
+tau ~ dgamma(c,c)
+
+pred = beta[1]+beta[2]*(-16.04)
+}"
+```
+
+```{r}
+jags.inits <- list(list(tau=1,beta=c(0,0)))
+jags.param = c("beta","tau","pred")
+jags.fit <- jags(jags.data,jags.inits,jags.param,
+                 model.file = textConnection(model_reg),n.iter=12000,n.chains = 1,n.burnin = 5000,n.thin=1,DIC =T,digits=6)
+
+
+```
+
+
+Estimated Regression Line and Point-wise 95% Probability band.
+```{r}
+ggplot() + 
+  aes(x = Xtr, y = Ytr) +
+  geom_point(color = "black") +
+  geom_smooth(method = "lm",level = 0.95) # linear smooth
+```
+
+```{r}
+jags.fit$BUGSoutput$summary
+```
+
+```{r}
+df <- rbind(c('beta[1]',jags.fit$BUGSoutput$summary[1,]),
+            c('beta[2]',jags.fit$BUGSoutput$summary[2,]),
+            c('prediction',jags.fit$BUGSoutput$summary[4,]),
+            c('tau',jags.fit$BUGSoutput$summary[5,]))
+pander(df)
+```
+
+
+The 95% creidble interval for new schools with x=-16.04 is (21.959,26.617)
+and mean 24.264.
+
+I'm not surprised that higher socioeconomic status were positively associated with higher test scores pn level of verbal since 1. school which has many higher socioeconomic status usually have better teachers 2. the parents in family with higher socioeconomic status are more likely has better education and consequently they can teach their children at home 3. childern in higher socioeconomic status are more likely to participate more social activities which can enhance their verbal skill

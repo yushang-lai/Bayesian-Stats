@@ -1,0 +1,1067 @@
+---
+title: "STATS 205 Final Project"
+author: "Yingxin Cao, Yuhshang Lai"
+date: "3/18/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(epiR)
+library(tidyverse)
+library(knitr)
+library(pander)
+library(R2jags)
+library(bayesplot)
+library(coda)
+library(ggplot2)
+library(GGally)
+library(fda)
+library(robustHD)
+# load("C:/Users/CYX/Google Drive/iPad/Stats 205/Final/dataspace.RData")
+```
+
+
+
+# Problem 1
+
+## (1a)
+
+We denote consumption of households on the first day as $y$. The parameters vector (including the intercept) we denote as $\beta$. The design matrix we denote as X with shape (n, r+1), where n represents number of samples and r represents number of covariates. Then we propose the following model for analysing the data,
+
+$$
+y \sim N(\mu, \frac1\tau)\\
+$$
+$$
+\mu\sim X\beta\\$$
+$$
+\beta|\tau\sim N(\beta_0, \frac g\tau(X'X)^{-1})\\$$
+$$
+\tau\sim Ga(a, b)\\$$
+$$
+\beta_0 = (X'X)^{-1}X'y\\$$
+$$
+g = n
+$$
+
+## (1b) 
+```{r, echo=FALSE}
+Irish.data = read.table(file="IrishElectricity.txt",header=T,sep="")
+attach(Irish.data)
+ggpairs(Irish.data[,1:7])
+```
+
+The above figure tells us that Age of the head of household has little influence on the first day Electorcity usage; thus, we decide not to include it in our model. In contrast, Resident number and Bedroom number have have two largest correlation respect to the Electorcity usage. Consequently, we decide to include them in all of the potential model we will consider. For the features Attitude of Reduce bill, Attitude of Environment as well as Education which have moderate effect on the usage. We decide to try either with of without each of them. Thus, their are total 8 models. 
+ 
+
+## (1c)
+
+The details of model has shown in part (a). We use standard g prior with unit information prior $g=n$ since we don't have strong evidence on the corvaiance.
+
+$$
+\beta|\tau\sim N(\beta_0, \frac g\tau(X'X)^{-1})\\$$
+$$
+\tau\sim Ga(a, b)\\$$
+$$
+\beta_0 = (X'X)^{-1}X'y\\
+$$
+
+The diffuse prior we use for $\tau$ with $a=b=0.001$.
+
+Pros: g-prior is a conjugate prior. It's inofrmative. It's variance resembles the frequentists perspective of estimation. It's invariant to scale of regressors.
+
+Cons: Though it's informative, it's not as good as BCJ priors. All the prior information are from design matrix X, which could be problematic in situations like incomplete data.
+
+
+## (1d)
+
+From the paried scatter plots as well as the correlations, we consider Age as irrelavent to our study. Since Number of Residents and Number of Bedrooms show high correlation, we fix these two features, and explore all combinations of all other features, resulting in following 8 models:
+
+Model 1: Resident + Bedroom 
+
+Model 2: Resident + Bedroom + Attitude.Reduce.Bill
+
+Mddel 3: Resident + Bedroom                        + Attitude.Environment
+
+Model 4: Resident + Bedroom                                               + Education
+
+Model 5: Resident + Bedroom + Attitude.Reduce.Bill + Attitude.Environment
+
+Model 6: Resident + Bedroom + Attitude.Reduce.Bill +                      + Education 
+
+Model 7: Resident + Bedroom                        + Attitude.Environment + Education 
+
+Model 8: Resident + Bedroom + Attitude.Reduce.Bill + Attitude.Environment + Education
+
+
+```{r, include=FALSE}
+DICs <- c()
+BICs <- c()
+LPMLs <- c()
+
+Resident <- standardize(Resident)
+Bedroom  <- standardize(Bedroom)
+Attitude.Reduce.Bill <- standardize(Attitude.Reduce.Bill)
+Attitude.Environment <- standardize(Attitude.Environment)
+Education <- standardize(Education)
+
+X.mat <- list()
+X.mat[[1]] = model.matrix(~ Resident + Bedroom)
+X.mat[[2]] = model.matrix(~ Resident + Bedroom + Attitude.Reduce.Bill)
+X.mat[[3]] = model.matrix(~ Resident + Bedroom                        + Attitude.Environment)
+X.mat[[4]] = model.matrix(~ Resident + Bedroom                                               + Education)
+X.mat[[5]] = model.matrix(~ Resident + Bedroom + Attitude.Reduce.Bill + Attitude.Environment)
+X.mat[[6]] = model.matrix(~ Resident + Bedroom + Attitude.Reduce.Bill +                      + Education)
+X.mat[[7]] = model.matrix(~ Resident + Bedroom                        + Attitude.Environment + Education)
+X.mat[[8]] = model.matrix(~ Resident + Bedroom + Attitude.Reduce.Bill + Attitude.Environment + Education)
+
+```
+
+```{r, include=FALSE}
+# not change
+
+model.reg.1 <- "model{
+for(i in 1:n){
+Y[i] ~ dnorm(mu[i],tau)
+mu[i] <- inprod(Xmat[i,],beta[]) 
+like[i] <- dnorm(Y[i],mu[i],tau)
+invlike[i] <- 1/like[i]
+pw_logf[i] <- log(like[i])
+}
+beta[1:r] ~ dmnorm(beta0,(tau/gg)*C0inv[1:r,1:r])
+tau ~ dgamma(a,b)
+}"
+
+jags.param <- c("beta","tau","like", "invlike", "pw_logf","mu")
+```
+
+
+```{r, include=FALSE}
+
+set.seed(123)
+
+for(kk in 1:8)
+{
+X.mat.1 = X.mat[[kk]]
+#X.mat.1 = X.mat.1[-54,]
+C0inv.1   = solve(t(X.mat.1)%*%X.mat.1)
+y = standardize(V1)
+#y = y[-54]
+
+# change
+jags.data.1=list(
+  Y=y,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.001, b=0.001,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+
+jags.fit.1 <- jags(data=jags.data.1, parameters.to.save = jags.param, model.file=textConnection(model.reg.1),
+                   n.iter=30000, n.chains=1,n.burnin=15000, n.thin=1, DIC=T, digits=6)
+r=dim(X.mat.1)[2]
+n=dim(X.mat.1)[1]
+pm_tau=jags.fit.1$BUGSoutput$summary["tau", "mean"]
+if(kk == 1)
+{
+  pm_coeff=jags.fit.1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]"), "mean"]
+}
+if(kk > 1 & kk< 5 )
+{
+  pm_coeff=jags.fit.1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]"), "mean"]
+}
+if(kk >4  & kk< 8)
+{
+  pm_coeff=jags.fit.1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]"), "mean"]
+}
+if(kk == 8)
+{
+  pm_coeff=jags.fit.1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]","beta[6]"), "mean"]
+}
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((y-(X.mat.1 %*% pm_coeff))^2)+ (r+1)*log(n)
+CPO1 <- 1/jags.fit.1$BUGSoutput$mean$invlike
+LPML1 <- sum(log(CPO1))
+
+DICs <- c(DICs, jags.fit.1$BUGSoutput$DIC)
+BICs <- c(BICs, BIC1)
+LPMLs <- c(LPMLs, LPML1)
+}
+
+```
+
+## (1e)
+
+```{r fig.height=4, fig.width=4, echo=FALSE}
+plot(main = 'Prior distribution',density(jags.fit.1$BUGSoutput$sims.matrix[,"tau"]),col='red',type='l',xlab ='tau',lwd=3,xlim=c(0.5,2.5),ylim=c(0,2.5))
+```
+
+```{r, echo=FALSE}
+df <- cbind(c("model 1","model 2","model 3","model 4","model 5","model 6","model 7","model 8"),DICs,BICs,LPMLs)
+pander(df)
+```
+
+Based on the information we get from data anaylsis in part (b), we decide to include Resident and Bedroom in all of the models. And for features Attitude.Reduce.Bill, Attitude.Environment and Education. We try either include or exclude each of them. And we decide to exclude Age since it has little influence on Electorcity Usage. Based on the DICs, BICs and LPMLs, we figure out that model 1,2 and 3 has similar (also better) BICs DICs and LPMLs which are the lowest three among all. Thus, we decide to choose to simpliest one Model 1 for our final choice model. 
+
+Model 1: Resident + Bedroom 
+
+Model 2: Resident + Bedroom + Attitude.Reduce.Bill
+
+Mddel 3: Resident + Bedroom                        + Attitude.Environment
+
+
+```{r}
+cat('Smallest DICs is at: Model',which(DICs==min(DICs)),'\n')
+cat('Smallest BICs is at: Model',which(BICs==min(BICs)),'\n')
+cat('Largest  LPMLs is at: Model',which(LPMLs==max(LPMLs)),'\n')
+```
+
+Model 1: Resident + Bedroom 
+
+```{r, include=FALSE}
+Index1 = which(Irish.data[,"Resident"]==1)
+Index2 = which(Irish.data[,"Resident"]==2)
+Index3 = which(Irish.data[,"Resident"]==3)
+Index4 = which(Irish.data[,"Resident"]==4)
+Index5 = which(Irish.data[,"Resident"]==5)
+mean.lst<- c()
+sd.lst <- c()
+mean.lst<- c(mean.lst,mean(V1[Index1]))
+sd.lst <- c(sd.lst,sd(V1[Index1]))
+mean.lst<- c(mean.lst,mean(V1[Index2]))
+sd.lst <- c(sd.lst,sd(V1[Index2]))
+mean.lst<- c(mean.lst,mean(V1[Index3]))
+sd.lst <- c(sd.lst,sd(V1[Index3]))
+mean.lst<- c(mean.lst,mean(V1[Index4]))
+sd.lst <- c(sd.lst,sd(V1[Index4]))
+mean.lst<- c(mean.lst,mean(V1[Index5]))
+sd.lst <- c(sd.lst,sd(V1[Index5]))
+```
+
+```{r, include=FALSE}
+model.reg.1 <- "model{
+for(i in 1:n){
+Y[i] ~ dnorm(mu[i],tau)
+mu[i] <- inprod(Xmat[i,],beta[]) 
+}
+mu1 = mean(mu[Index1])
+mu2 = mean(mu[Index2])
+mu3 = mean(mu[Index3])
+mu4 = mean(mu[Index4])
+mu5 = mean(mu[Index5])
+beta[1:r] ~ dmnorm(beta0,(tau/gg)*C0inv[1:r,1:r])
+tau ~ dgamma(a,b)
+}"
+
+jags.param <- c("beta","mu","mu1","mu2","mu3","mu4","mu5")
+```
+
+
+```{r, include=FALSE}
+for(kk in 1:1)
+{
+X.mat.1 = X.mat[[kk]]
+#X.mat.1 = X.mat.1[-54,]
+C0inv.1   = solve(t(X.mat.1)%*%X.mat.1)
+y = standardize(V1)
+#y = y[-54]
+
+# change
+jags.data.1=list(
+  Y=y,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  Index1 = Index1,
+  Index2 = Index2,
+  Index3 = Index3,
+  Index4 = Index4,
+  Index5 = Index5,
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.001, b=0.001,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+
+jags.fit.1 <- jags(data=jags.data.1, parameters.to.save = jags.param, model.file=textConnection(model.reg.1), 
+                   n.iter=30000, n.chains=1,n.burnin=15000, n.thin=1, DIC=T, digits=6)
+}
+```
+
+```{r Fig4, echo=FALSE, fig.height=5, fig.width=9}
+par(mfrow=c(2,2))
+plot(main = 'beat[1] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,"beta[1]"]),col='red',type='l',xlab ='beta[1]',lwd=3,xlim=c(-0.5,0.5),ylim=c(0,6))
+#legend(-0.5,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+
+plot(main = 'beat[2] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,"beta[2]"]),col='red',type='l',xlab ='beta[2]',lwd=3,xlim=c(-0.5,0.5),ylim=c(0,6))
+#legend(-0.4,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+
+plot(main = 'beat[3] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,"beta[3]"]),col='red',type='l',xlab ='beta[3]',lwd=3,xlim=c(0,1),ylim=c(0,6))
+#legend(-0.05,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+
+
+plot(main = 'Subpopulation by Number of Resident : Mean Plot',density(mean.lst[1]+sd.lst[1]*jags.fit.1$BUGSoutput$sims.matrix[,"mu1"]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,60),ylim=c(0,0.5))
+lines(density(mean.lst[2]+sd.lst[2]*jags.fit.1$BUGSoutput$sims.matrix[,"mu2"]),col='blue',type='l',xlab ='mu',lwd=3)
+lines(density(mean.lst[3]+sd.lst[3]*jags.fit.1$BUGSoutput$sims.matrix[,"mu3"]),col='gray',type='l',xlab ='mu',lwd=3)
+lines(density(mean.lst[4]+sd.lst[4]*jags.fit.1$BUGSoutput$sims.matrix[,"mu4"]),col='green',type='l',xlab ='mu',lwd=3)
+lines(density(mean.lst[5]+sd.lst[5]*jags.fit.1$BUGSoutput$sims.matrix[,"mu5"]),col='black',type='l',xlab ='mu',lwd=3)
+legend(0,0.5,legend=c("Resident #1","Resident #2","Resident #3","Resident #4","Resident #5"),col=c("red","blue","gray","green","black"),lty=1:2, cex=0.8)
+```
+
+The above figure is the plot of posterterior inference of for the regression parameter beta[1], beta[2], beta[3]. We also include the subpopulation of the households with different number of Resident. Five distributions are considerably reasonable, with the tendency that the more residents in the household, the more electorcity they will use. Households of three is an outlier since it may include samll child who does not use much electorcity. 
+
+
+```{r, echo=FALSE}
+
+df <- cbind(c("model 1","model 2","model 3","model 4","model 5","model 6","model 7","model 8"),DICs,BICs,LPMLs)
+pander(df)
+
+```
+
+
+## (1f)
+
+```{r}
+exp(LPMLs[4]-LPMLs[1])
+```
+
+Based on the Week 9 Slides Bayes Factor page 61/105. We have Bayes Factor 
+$$BF_{41} = exp(LPML_{4}-LPML_{1}) \approx 0.4$$
+which  < 1, then we conclude that level of Education is not stongly related to the energy consumption.
+
+
+
+#(2)
+## (2a)
+
+```{r, include=FALSE}
+Age <- standardize(Age)
+Resident_Education <- standardize(Resident*Education)
+
+model.reg.1 <- "model{
+for(i in 1:n){
+Y[i] ~ dnorm(mu[i],tau)
+mu[i] <- inprod(Xmat[i,],beta[]) 
+like[i] <- dnorm(Y[i],mu[i],tau)
+invlike[i] <- 1/like[i]
+pw_logf[i] <- log(like[i])
+}
+beta[1:r] ~ dmnorm(beta0,(tau/gg)*C0inv[1:r,1:r])
+tau ~ dgamma(a,b)
+}"
+
+jags.param <- c("beta","tau","like", "invlike", "pw_logf")
+
+
+
+X.mat[[9]] = model.matrix(~ Age + Resident + Education +  Resident_Education)
+X.mat.1 = X.mat[[9]]
+#X.mat.1 = X.mat.1[-54,]
+#X.mat.1 = X.mat.1[-121,]
+C0inv.1   = t(X.mat.1)%*%X.mat.1
+y = standardize(V1)
+#y = y[-54]
+#y = y[-121]
+
+# change
+jags.data.1=list(
+  Y=y,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.001, b=0.001,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+jags.fit.1 <- jags(data=jags.data.1, parameters.to.save = jags.param, model.file=textConnection(model.reg.1), 
+                   n.iter=15000, n.chains=1,n.burnin=5000, n.thin=1, DIC=T, digits=6)
+r=dim(X.mat.1)[2]
+n=dim(X.mat.1)[1]
+pm_tau=jags.fit.1$BUGSoutput$summary["tau", "mean"]
+pm_coeff=jags.fit.1$BUGSoutput$summary[c("beta[1]","beta[2]","beta[3]","beta[4]","beta[5]"), "mean"]
+BIC1 <- -n*log(pm_tau)+n*log(2*pi) + pm_tau*sum((y-(X.mat.1 %*% pm_coeff))^2)+ (r+1)*log(n)
+CPO1 <- 1/jags.fit.1$BUGSoutput$mean$invlike
+LPML1 <- sum(log(CPO1))
+```
+
+
+
+```{r, echo=FALSE}
+n =1
+df <- cbind(c("model 1","model 9"),c('BICs',DICs[n],jags.fit.1$BUGSoutput$DIC),c('DICs',BICs[n],BIC1),c('LPMLs',LPMLs[n],LPML1))
+pander(df) 
+```
+
+Compare the model 1 and the new interaction model propose, we find that model 1 both have lower BICs and DIcs while harboring lager LPML. Thus, we prefer model 1 to the new model.
+
+##(2b)
+
+```{r, include=FALSE}
+model.reg.1 <- "model{
+for(i in 1:n){
+Y[i] ~ dnorm(mu[i],tau)
+mu[i] <- inprod(Xmat[i,],beta[]) 
+}
+beta[1:r] ~ dmnorm(beta0,(tau/gg)*C0inv[1:r,1:r])
+tau ~ dgamma(a,b)
+}"
+
+jags.param <- c("beta","tau","mu")
+```
+
+
+```{r, include=FALSE}
+
+X.mat.1 = X.mat[[1]]
+C0inv.1   = solve(t(X.mat.1)%*%X.mat.1)
+y = standardize(V1)
+
+# change
+jags.data.1=list(
+  Y=y,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.001, b=0.001,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+jags.data.2=list(
+  Y=y,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.01, b=0.01,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+jags.data.3=list(
+  Y=y,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.1, b=0.1,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+
+jags.fit.1 <- jags(data=jags.data.1, parameters.to.save = jags.param, model.file=textConnection(model.reg.1), 
+                   n.iter=15000, n.chains=1,n.burnin=5000, n.thin=1, DIC=T, digits=6)
+jags.fit.2 <- jags(data=jags.data.2, parameters.to.save = jags.param, model.file=textConnection(model.reg.1), 
+                   n.iter=15000, n.chains=1,n.burnin=5000, n.thin=1, DIC=T, digits=6)
+jags.fit.3 <- jags(data=jags.data.3, parameters.to.save = jags.param, model.file=textConnection(model.reg.1), 
+                   n.iter=15000, n.chains=1,n.burnin=5000, n.thin=1, DIC=T, digits=6)
+
+```
+
+
+```{r, include=FALSE}
+color_scheme_set("blue")
+par(mfrow=c(3,1))
+jags.mcmc.1 = as.mcmc(jags.fit.1)
+jags.mcmc.2 = as.mcmc(jags.fit.2)
+jags.mcmc.3 = as.mcmc(jags.fit.3)
+#mcmc_intervals(jags.mcmc.1,pars=c("beta[1]","beta[2]","beta[3]","beta[4]","tau"))
+#mcmc_intervals(jags.mcmc.2,pars=c("beta[1]","beta[2]","beta[3]","beta[4]","tau"))
+#mcmc_intervals(jags.mcmc.3,pars=c("beta[1]","beta[2]","beta[3]","beta[4]","tau"))
+```
+
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+plot(main = 'beat[1] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,1]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(-0.5,0.5),ylim=c(0,6))
+lines(density(jags.fit.2$BUGSoutput$sims.matrix[,1]),col='green',type='l',xlab ='mu',lwd=3)
+lines(density(jags.fit.3$BUGSoutput$sims.matrix[,1]),col='blue',type='l',xlab ='mu',lwd=3)
+legend(-0.5,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+
+plot(main = 'beat[2] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,2]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(-0.5,0.5),ylim=c(0,6))
+lines(density(jags.fit.2$BUGSoutput$sims.matrix[,2]),col='green',type='l',xlab ='mu',lwd=3)
+lines(density(jags.fit.3$BUGSoutput$sims.matrix[,2]),col='blue',type='l',xlab ='mu',lwd=3)
+legend(-0.4,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+
+plot(main = 'beat[3] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,3]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(0,1),ylim=c(0,6))
+lines(density(jags.fit.2$BUGSoutput$sims.matrix[,3]),col='green',type='l',xlab ='mu',lwd=3)
+lines(density(jags.fit.3$BUGSoutput$sims.matrix[,3]),col='blue',type='l',xlab ='mu',lwd=3)
+legend(-0.05,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+
+
+#plot(main = 'beat[4] density plot',density(jags.fit.1$BUGSoutput$sims.matrix[,4]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(-0.5,0.3),ylim=c(0,6))
+#lines(density(jags.fit.2$BUGSoutput$sims.matrix[,4]),col='green',type='l',xlab ='mu',lwd=3)
+#lines(density(jags.fit.3$BUGSoutput$sims.matrix[,4]),col='blue',type='l',xlab ='mu',lwd=3)
+#legend(-0.55,5,legend=c("a=b=0.001","a=b=0.01","a=b=0.1"),col=c("red","green","blue"),lty=1:2, cex=0.8)
+```
+
+From the above figure, we can see that when we change prior tau from (a=b=0.001) to (a=b=0.01) and then to (a=b=0.1). The posterior distribution of regression parameters don't change much. Thus the best model we choose is not sensitive on priors.
+
+
+```{r, include=FALSE}
+aa = Irish.data[,"Resident"]
+```
+
+
+## (2c)
+
+```{r, include=FALSE}
+
+X.mat[[9]] = model.matrix(~ Age + Resident + Education +  Resident_Education)
+
+model.reg.1 <- "model{
+for(i in 1:n){
+Y[i] ~ dnorm(mu[i],tau)
+mu[i] <- inprod(Xmat[i,],beta[]) 
+}
+beta[1:r] ~ dmnorm(beta0,(tau/gg)*C0inv[1:r,1:r])
+tau ~ dgamma(a,b)
+meaV  <- (beta[1] + beta[2]*mea.Age + beta[3]*mea.Res + beta[4]*mea.Edu +beta[5]*mea.Int)*sd(V1)+mean(V1)
+meaV4 <- (beta[1] + beta[2]*mea.Age + beta[3]*mea.Res4 + beta[4]*mea.Edu +beta[5]*mea.Int)*sd(V1)+mean(V1)
+}"
+
+jags.param <- c("beta","tau","mu","meaV","meaV4")
+
+
+X.mat.1 = X.mat[[9]]
+C0inv.1   = solve(t(X.mat.1)%*%X.mat.1)
+y = standardize(V1)
+
+# change
+jags.data.1=list(
+  Y=y,
+  V1 = V1,
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+  mea.Age = median(Age),
+  mea.Res = median(Resident),
+  mea.Res4= (4- mean(aa))/sd(aa),
+  mea.Edu = median(Education),
+  mea.Int = median(Resident_Education),
+  beta0 = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(y),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.001, b=0.001,## diffuse prior
+  gg=dim(X.mat.1)[1] # unit information prior
+)
+
+jags.fit.1 <- jags(data=jags.data.1, parameters.to.save = jags.param, model.file=textConnection(model.reg.1), 
+                   n.iter=15000, n.chains=1,n.burnin=5000, n.thin=1, DIC=T, digits=6)
+
+```
+
+
+```{r, echo=FALSE}
+plot(main="Median Energy Consumption",density(jags.fit.1$BUGSoutput$sims.matrix[,"meaV"]),xlim=c(20,40), lwd=2, col='red')
+lines(density(jags.fit.1$BUGSoutput$sims.matrix[,"meaV4"]), lwd=2, col='green')
+median(jags.fit.1$BUGSoutput$sims.matrix[,"meaV"])
+median(jags.fit.1$BUGSoutput$sims.matrix[,"meaV4"])
+legend(28,0.28,legend=c("Median","Median If Change ResidentNumber to 4"),col=c("red","green"),lwd=1:2, cex=0.8)
+```
+
+
+
+```{r}
+jags.fit.1$BUGSoutput$summary[7:8,]
+```
+
+From the above plot and table, we find that tange of meadian level households we will predict use from (23.65,28.41) with 95% credible interval with mean 26. If change Resident number to 4, we will predict (28.25,35.71) as 95 credible intervel and mean 31.97.
+
+## (3)
+### (a)
+
+Here, differ than problems above, we consider y for all days (y's for different t). So here, our y is a (N, T) matrix, with rows indicates housholds (N in total) and columns indicates days (T in total).
+
+```{r, include=FALSE}
+# for(i in 1:(n*TT)){
+# Y[i] ~ dnorm(mu[i],tau[Pos[i]])
+# mu[i] <- inprod(Xmat[Pos1[i],],beta.i[i,1:r]) 
+# beta.i[i,1:r] ~ dmnorm(beta[Pos[i],], tau.i[Pos[i]]*II[1:r,1:r]) 
+# }
+# 
+# for(t in 1:TT){
+# beta[t,1:r] ~ dmnorm(beta0[1:r],(tau[t]/gg)*C0inv[1:r,1:r])
+# tau[t] ~ dgamma(a,b)
+# tau.i[t] ~ dgamma(a,b)
+# mu0[t] <- mean(mu[(n*(t-1)+1):(n*(t))])
+# }
+# 
+# beta0[1:r] ~ dmnorm(beta.mean,tau0*II[1:r,1:r])
+# tau0 ~ dgamma(a,b)
+```
+
+We propose to model the consumption with the following hierarchical model. We model effect at individual level as $\beta_{i,t}$. All individual effects come from same daily population effect prior with mean $\beta_t$. And all daily population effect come from a common prior with mean $\beta_0$. We model the coefficients with standard g-prior. Details are shown below.
+
+This design of model allow us to model effect of different variables at individual levels, instead of all individuals have same effect at time t.
+
+
+$$
+y_{i|t} \sim N(\mu_{i,t} \frac1 \tau_{0_t})
+$$
+
+$$
+\mu_{i|t}\sim X_{i}\beta_{i,t}
+$$
+
+
+$$
+\beta_{i,t} \sim N(\beta_{t},\tau_{i,t})$$
+$$
+\beta_{t}\sim N(\beta_0, \frac {g}{\tau_{t}} (X'X)^{-1})$$
+$$
+\tau_{t} \sim Gamma(a,b)$$
+$$
+\tau_{0_t} \sim Gamma(a,b)$$
+$$
+\tau_{i,t} \sim Gamma(a,b)$$
+$$
+\beta_0 \sim N((X'X)^{-1}X'\bar y,\frac{1}{\tau_{0} } \cdot I)$$
+$$
+\bar y =\frac1T \sum_{t=1}^{T} y[:, t]$$
+$$
+\tau_{0}\sim Ga(a_{0}, b_{0})$$
+$$
+g = n
+
+$$
+
+
+
+
+
+### (b)
+```{r, include=FALSE}
+X.mat[[1]] = model.matrix(~ Resident + Bedroom)
+X.mat.1 = X.mat[[1]]
+C0inv.1   = t(X.mat.1)%*%X.mat.1
+y = Irish.data[,7:127]
+y1 = y
+mean.lst <- c()
+sd.lst <- c()
+for(i in 1:121){
+  mean.lst <- c(mean.lst,mean(y1[,i]))
+  sd.lst <- c(sd.lst,sd(y1[,i]))
+  y1[,i] <- standardize(y1[,i])
+}
+y = flatten(y1)
+# change
+jags.data.1=list(
+  II = diag(dim(X.mat.1)[2]),
+  Y=y,
+  Y1 = y1，
+  Meann = mean.lst,
+  STDn = sd.lst,
+  TT=dim(y1)[2],
+  Xmat=X.mat.1,
+  r=dim(X.mat.1)[2],
+  n=dim(X.mat.1)[1],
+
+  beta.mean = solve(t(X.mat.1)%*%X.mat.1) %*% t(X.mat.1) %*% data.matrix(rowMeans(data.matrix(y1[,1:121]))),
+  # beta.mean = c(0,0,0,0,0,0),
+  #beta.mean = c(0,0,0,0),
+  #beta0 = rep(0, dim(X.mat.1)[2]),
+  C0inv = C0inv.1,
+  a=0.001, b=0.001,## diffuse prior
+  gg=dim(X.mat.1)[1],# unit information prior
+  Pos = rep(c(1:dim(y1)[2]),each=dim(y1)[1]),
+  Pos1 = rep(c(1:dim(y1)[1]),time=dim(y1)[2])
+)
+# not change
+model.reg.1 <- "model{
+
+for(i in 1:(n*TT)){
+Y[i] ~ dnorm(mu[i],tau[Pos[i]])
+mu[i] <- inprod(Xmat[Pos1[i],],beta.i[i,1:r])
+beta.i[i,1:r] ~ dmnorm(beta[Pos[i],], tau.i[Pos[i]]*II[1:r,1:r])
+}
+
+for(t in 1:TT){
+beta[t,1:r] ~ dmnorm(beta0[1:r],(tau[t]/gg)*C0inv[1:r,1:r])
+tau[t] ~ dgamma(a,b)
+tau.i[t] ~ dgamma(a,b)
+mu0[t] <- mean(mu[(n*(t-1)+1):(n*(t))])
+}
+
+beta0[1:r] ~ dmnorm(beta.mean,tau0*II[1:r,1:r])
+tau0 ~ dgamma(a,b)
+
+}"
+
+
+jags.param <- c("beta","beta0","mu","mu0","beta.i")
+
+# change
+jags.fit.7 <- jags(data=jags.data.1, parameters.to.save = jags.param, model.file=textConnection(model.reg.1),
+                   n.iter=15000, n.chains=1,n.burnin=10000, n.thin=10, DIC=T, digits=6)
+
+```
+
+
+
+
+```{r, include=FALSE}
+jags.fit.6 <- jags.fit.7
+```
+
+
+```{r, include=FALSE}
+#dim(X.mat.1)[2]*dim(X.mat.1)[1]*121
+#30+120*151
+#83+120*151
+#91+120*151
+```
+
+```{r, include=FALSE}
+which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta.i[30,2]')
+which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta.i[18150,2]')
+which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta.i[83,2]')
+which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta[1,2]')
+```
+
+
+```{r, include=FALSE}
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta[1,2]')
+end.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta[121,2]')
+pred_mean <- c()
+sd_lst2 <- c()
+for(i in start.index:end.index){
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,i]*sd.lst[i-start.index+1]+mean.lst[i-start.index+1]
+  pred_mean <- c(pred_mean,mean(data))
+  sd_lst2 <- c(sd_lst2,sd(data))
+}
+
+start.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='beta.i[30,2]')
+#end.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='beta.i[121]')
+pred_mean_30 <- c()
+sd_lst2_30 <- c()
+for(i in 1:121){
+  num = start.index + (i-1)*151
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,num]*sd.lst[i]+mean.lst[i]
+  pred_mean_30 <- c(pred_mean_30,mean(data))
+  sd_lst2_30 <- c(sd_lst2_30,sd(data))
+}
+
+start.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='beta.i[83,2]')
+#end.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='mu83[121]')
+pred_mean_83 <- c()
+sd_lst2_83 <- c()
+for(i in 1:121){
+  num = start.index + (i-1)*151
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,num]*sd.lst[i]+mean.lst[i]
+  pred_mean_83 <- c(pred_mean_83,mean(data))
+  sd_lst2_83 <- c(sd_lst2_83,sd(data))
+}
+
+start.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='beta.i[91,2]')
+#end.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='mu91[121]')
+pred_mean_91 <- c()
+sd_lst2_91 <- c()
+for(i in 1:121){
+  num = start.index + (i-1)*151
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,num]*sd.lst[i]+mean.lst[i]
+  pred_mean_91 <- c(pred_mean_91,mean(data))
+  sd_lst2_91 <- c(sd_lst2_91,sd(data))
+}
+
+
+```
+
+
+
+```{r, include=FALSE}
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta[1,2]')
+end.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta[121,2]')
+pred_mean <- c()
+sd_lst2 <- c()
+for(i in start.index:end.index){
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,i]
+  pred_mean <- c(pred_mean,mean(data))
+  sd_lst2 <- c(sd_lst2,sd(data))
+}
+
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta.i[30,2]')
+#end.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='beta.i[121]')
+pred_mean_30 <- c()
+sd_lst2_30 <- c()
+for(i in 1:121){
+  num = start.index + (i-1)*151
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,num]
+  pred_mean_30 <- c(pred_mean_30,mean(data))
+  sd_lst2_30 <- c(sd_lst2_30,sd(data))
+}
+
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta.i[83,2]')
+#end.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='mu83[121]')
+pred_mean_83 <- c()
+sd_lst2_83 <- c()
+for(i in 1:121){
+  num = start.index + (i-1)*151
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,num]
+  pred_mean_83 <- c(pred_mean_83,mean(data))
+  sd_lst2_83 <- c(sd_lst2_83,sd(data))
+}
+
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='beta.i[91,2]')
+#end.index<-which(colnames(jags.fit.1$BUGSoutput$sims.matrix)=='mu91[121]')
+pred_mean_91 <- c()
+sd_lst2_91 <- c()
+for(i in 1:121){
+  num = start.index + (i-1)*151
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,num]
+  pred_mean_91 <- c(pred_mean_91,mean(data))
+  sd_lst2_91 <- c(sd_lst2_91,sd(data))
+}
+
+
+```
+
+
+```{r, include=FALSE}
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='mu0[1]')
+end.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='mu0[121]')
+```
+
+
+
+```{r Fig2, echo=FALSE, fig.height=8, fig.width=15}
+par(mfrow=c(2,2))
+# ,xlim=c(20,50),ylim=c(20,50)
+plot(main='Feature Resident effect on Population Level Usage verse Time',pred_mean,cex =0,ylim=c(-0.6,0.7), ylab='beta_t[2]')
+lines(pred_mean, lwd=2, col='purple')
+lines(pred_mean+1.96*sd_lst2, lty=2, col='purple')
+lines(pred_mean-1.96*sd_lst2, lty=2, col='purple')
+pred_range = c(1:121)
+polygon(c(pred_range ,rev(pred_range))
+        ,c(pred_mean+1.96*sd_lst2,rev(pred_mean-1.96*sd_lst2))
+        ,col=adjustcolor('purple',0.3)
+        ,lty=0
+)
+ 
+  
+plot(main='Feature Resident effect on Hosehold #30 Usage verse Time',pred_mean,cex =0,ylim=c(-0.6,0.7), ylab='beta_{t,30}[2]')
+lines(pred_mean_30, lwd=2, col='blue')
+lines(pred_mean_30+1.96*sd_lst2_30, lty=2, col='blue')
+lines(pred_mean_30-1.96*sd_lst2_30, lty=2, col='blue')
+pred_range = c(1:121)
+polygon(c(pred_range ,rev(pred_range))
+        ,c(pred_mean_30+1.96*sd_lst2_30,rev(pred_mean_30-1.96*sd_lst2_30))
+        ,col=adjustcolor('blue',0.3)
+        ,lty=0
+)
+
+
+plot(main='Feature Resident effect on Hosehold #83 Usage verse Time',pred_mean,cex =0,ylim=c(-0.6,0.7), ylab='beta_{t,83}[2]')
+lines(pred_mean_83, lwd=2, col='red')
+lines(pred_mean_83+1.96*sd_lst2_83, lty=2, col='red')
+lines(pred_mean_83-1.96*sd_lst2_83, lty=2, col='red')
+pred_range = c(1:121)
+polygon(c(pred_range ,rev(pred_range))
+        ,c(pred_mean_83+1.96*sd_lst2_83,rev(pred_mean_83-1.96*sd_lst2_83))
+        ,col=adjustcolor('red',0.3)
+        ,lty=0
+)
+
+plot(main='Feature Resident effect on Hosehold #91 Usage verse Time',pred_mean,cex =0,ylim=c(-0.6,0.7), ylab='beta_{t,91}[2]')
+lines(pred_mean_91, lwd=2, col='orange')
+lines(pred_mean_91+1.96*sd_lst2_91, lty=2, col='orange')
+lines(pred_mean_91-1.96*sd_lst2_91, lty=2, col='orange')
+pred_range = c(1:121)
+polygon(c(pred_range ,rev(pred_range))
+        ,c(pred_mean_91+1.96*sd_lst2_91,rev(pred_mean_91-1.96*sd_lst2_91))
+        ,col=adjustcolor('orange',0.3)
+        ,lty=0
+)
+```
+
+We plot regression cofficent $\beta$ as the effect of number residents, since it reflects how much the comssumption increses with 1 unit increase of number of residents.
+
+We plot the posterior mean as the solid line, the 95% credible interval as dotted line. The plots are information for posterior distributions of effect of number of residents at population lavel $\beta_t[2]$ as well as indifudual levels $\beta_{i,t}[2]$. Idividuals display similar patterns as poplulation level, slightly increasing with time. #83 with 4 residnets in house have higher effect with one unit increase of resident. Effect for #83 also increses the most along time.
+
+```{r, include=FALSE}
+start.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='mu0[1]')
+end.index<-which(colnames(jags.fit.6$BUGSoutput$sims.matrix)=='mu0[121]')
+pred_mean <- c()
+sd_lst2 <- c()
+for(i in start.index:end.index){
+  data <- jags.fit.6$BUGSoutput$sims.matrix[,i]*sd.lst[i-start.index+1]+mean.lst[i-start.index+1]
+  pred_mean <- c(pred_mean,mean(data))
+  sd_lst2 <- c(sd_lst2,sd(data))
+}
+```
+
+
+## (4)
+
+```{r Fig3, echo=FALSE, fig.height=4, fig.width=10}
+par(mfrow=c(1,1))
+# ,xlim=c(20,50),ylim=c(20,50)
+plot(main='Population Level Usage verse Time',pred_mean,cex =0,ylim=c(20,50))
+lines(pred_mean, lwd=2, col='purple')
+lines(pred_mean+1.96*sd_lst2, lty=2, col='purple')
+lines(pred_mean-1.96*sd_lst2, lty=2, col='purple')
+abline(v = 47, col="red", lwd=3, lty=2)
+
+#lines(smooth.spline(pred_mean), lwd=2, col='purple')
+#lines(smooth.spline((pred_mean+1.96*sd_lst2)), lty=2, col='purple')
+#lines(smooth.spline((pred_mean-1.96*sd_lst2)), lty=2, col='purple')
+pred_range = c(1:121)
+polygon(c(pred_range ,rev(pred_range))
+        ,c(pred_mean+1.96*sd_lst2,rev(pred_mean-1.96*sd_lst2))
+        ,col=adjustcolor('purple',0.3)
+        ,lty=0
+)
+
+```
+
+From the above figure we can see that the usage of the electorcity in population level experince a sharp increasing from 30 to 45 and a sharp down from 45 to 32 during the two weeks before traiff structure changed. At the day the change executed, there is another sharp decreasing on the electorcity usage from aound 33 to 25. After the change, we see that population use less and less energy during the next 2.5 months which is not returning to the pattern but ues much less than the pattern before the policy change. From the figure below, we plot the density of the Energy use at day 37 which is 10 days before the policy, day 47 which is the day the policy executed and day 107 which is 2 month later from policy, we can see that there is a tendency people use less electorcity after the policy. By closley examining the posterior mean, we can conclude that the usage doesn't return to previous level.
+
+
+```{r, echo=FALSE}
+
+plot(main = 'Energey Usage density plot',density(mean(V37)+sd(V37)*jags.fit.6$BUGSoutput$sims.matrix[,"mu0[37]"]),col='red',type='l',xlab ='mu',lwd=3,xlim=c(20,45),ylim=c(0,0.7))
+lines(density(mean(V47)+sd(V47)*jags.fit.6$BUGSoutput$sims.matrix[,"mu0[47]"]),col='green',type='l',xlab ='mu',lwd=3)
+lines(density(mean(V107)+sd(V107)*jags.fit.6$BUGSoutput$sims.matrix[,"mu0[107]"]),col='blue',type='l',xlab ='mu',lwd=3)
+legend(30,0.7,legend=c("Energy Usage Day 37","Energy Usage Day 47","Energy Usage Day 107"),col=c("red","green","blue"),lwd=1:3, cex=0.8)
+```
+
+## (Problem 2)
+### 5.
+### (a)
+
+Here we use two methods to induce sparsity: the first is Bayesian Lasso; the second is Two-group mixture modeling with Spike-and-slab priors. Bayesian Lasso assign regression coefficients a double exponential prior that centered at 0. Spike-and-slab perform the variable selection with a Bernoulli latent auxiliary variable, to assign if the corresponding coefficient comes from zero.
+
+Spike-and-slab provides this latent variable, which provides direct information on our variable selection problem. For Bayesian Lasso, we need extra testing procedures. Bayesian lasso does not put any point-mass on zero for the prior. Lasso shrinks all parameters with the Laplace prior.
+
+Compared with frequentists' methods (i.e. traditional lasso), Bayesian methods require MCMC which is computationally more expensive. Both methods would preduce similar results, however, Bayesian method could generate posterior distributions for all parameters, which is more useful than point estimates. 
+### (b)
+
+```{r, include=FALSE}
+X = read.table(file="./biomarkers.csv",header=F,sep=',')
+Y = read.table(file="./survival.csv",header=F,sep=',')
+#ggpairs(Biomarkers.data[,1:7])
+
+for (i in 1:dim(X)[2]){
+  X[,i] = standardize(X[,i])
+}
+
+```
+
+
+
+```{r, include=FALSE}
+
+jags.data.s=list(
+  Y=Y['V1'],
+  Xmat=X,
+  p=dim(X)[2],
+  n=dim(X)[1],
+  a=0.001, b=100, c=0.01
+)
+
+model.reg.s <- "model{
+for(i in 1:n){
+y[i] ~ dbern(theta[i]) # Likelihood
+logit(theta[i]) <- beta0 + inprod(Xmat[i,], beta[])
+}
+
+for(j in 1:p){
+beta[j] ~ ddexp(0,tau.b)
+prob_pos[j]=step(beta[j])
+prob_neg[j]=step(-beta[j])
+}
+
+tau.b ~ dunif(a,b)
+beta0 ~ dnorm(0, c)
+
+}"
+
+jags.param.s <- c("beta", "prob_pos", "prob_neg")
+set.seed(123)
+jags.fit.s <- jags(data=jags.data.s, parameters.to.save = jags.param.s, model.file=textConnection(model.reg.s),
+                   n.iter=30000, n.chains=1, n.burnin=20000, n.thin=10, DIC=F, digits=6)
+```
+
+The selected variables for Bayesian Lasso are shown below. We set the threshold of probability being positive or negative at 0.54. In total, we selected 10 variables. It seems selecting variables with probability of being negative or positive is not ideal, since beta[76] has mean -0.0001 but with probability being positive 0.55.
+
+```{r}
+var.select = (jags.fit.s$BUGSoutput$summary[1001:2000, 1] > 0.54) + (jags.fit.s$BUGSoutput$summary[1001:2000, 1] <0.46)
+sum(var.select)
+jags.fit.s$BUGSoutput$summary[1:1000,][var.select>0, ]
+jags.fit.s$BUGSoutput$summary[1001:2000,][var.select>0, ]
+jags.fit.s$BUGSoutput$summary[2001:3000,][var.select>0, ]
+
+```
+
+
+
+```{r, include=FALSE}
+
+jags.data.s2=list(
+  Y=Y['V1'],
+  Xmat=X,
+  p=dim(X)[2],
+  n=dim(X)[1],
+  a=0.001, b=100, c=0.01
+)
+
+model.reg.s2 <- "model{
+
+for(i in 1:n){
+y[i] ~ dbern(mu[i]) # Likelihood
+mu[i]=beta0+inprod(Xmat[i,], beta[])
+}
+
+tau.b ~ dunif(a,b)
+beta0 ~ dnorm(0, c)
+
+for(j in 1:p){
+
+prec[j]=(1-gamma[j])*100+gamma[j]*0.1
+beta[j]~dnorm(0,prec[j])
+gamma[j]~dbern(0.5)
+}
+}"
+set.seed(123)
+jags.param.s2 <- c("beta", "gamma")
+jags.fit.s2 <- jags(data=jags.data.s2, parameters.to.save = jags.param.s2, model.file=textConnection(model.reg.s2),
+                   n.iter=30000, n.chains=1, n.burnin=20000, n.thin=10, DIC=F, digits=6)
+```
+
+
+```{r, include=FALSE}
+plot.df <- data.frame(matrix(ncol = 1, nrow = 1000))
+plot.df['mean'] <- jags.fit.s2$BUGSoutput$summary[1001:2000,1]
+plot.df['name'] <- rownames(jags.fit.s2$BUGSoutput$summary[1001:2000,])
+plot.df <- plot.df['mean', 'name']
+```
+
+
+Variables selected by Spike-and-slab are shown below. Means of Bernoulli auxiliary variable for feature selection are shown by gamma[i]. We can see results are better than Bayesian lasso, since Spike-and-slab provides a more direct way for variable selection, unlike Bayesian lasso requires further tests.
+
+
+
+```{r}
+sum(jags.fit.s2$BUGSoutput$summary[1001:2000, 1] > 0.54)
+jags.fit.s2$BUGSoutput$summary[1001: 2000,][jags.fit.s2$BUGSoutput$summary[1001:2000, 1] > 0.54, ]
+jags.fit.s2$BUGSoutput$summary[1: 1000,][jags.fit.s2$BUGSoutput$summary[1001:2000, 1] > 0.54, ]
+```
+
